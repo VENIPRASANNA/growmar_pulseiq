@@ -1,5 +1,5 @@
 erDiagram
-    dim_employee ||--o{ fact_payroll : "employee_key"
+    dim_employee o|--o{ fact_payroll : "employee_key (unknown -1 allowed)"
     dim_date ||--o{ fact_payroll : "date_key"
     dim_department ||--o{ fact_payroll : "department_id"
     dim_role ||--o{ fact_payroll : "role_id"
@@ -44,5 +44,5 @@ erDiagram
     dim_department ||--o{ fact_attrition_risk : "department_id"
     dim_date ||--o{ fact_attrition_risk : "as_of_date_key"
 
-    dim_department ||--o{ fact_forecast : "department_id"
+    dim_department o|--o{ fact_forecast : "department_id (ALL aggregate allowed)"
     dim_date ||--o{ fact_forecast : "forecast_month_key"
