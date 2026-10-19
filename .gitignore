@@ -23,3 +23,12 @@ logs/
 
 # Internal validation instructions
 docs/validation_vault_instructions.md
+
+# Generated Task 1 source and warehouse exports
+data/warehouse_export/
+data/fact_task_source.csv
+data/dim_team_source.csv
+data/dim_sprint_source.csv
+
+# Local screenshots and temporary evidence
+/evidence/

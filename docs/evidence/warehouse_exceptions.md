@@ -57,3 +57,10 @@ The eight raw-source facts match their source row counts. The four Task 1-valida
 - fact_forecast: 72
 
 The two unresolved payroll records remain included in the payroll count.
+
+### Forecast aggregate department
+
+- `fact_forecast` contains 72 rows: 60 department-specific forecast rows and 12 rows with `department_id = 'ALL'`.
+- The ETL validation explicitly allows `ALL` as a special aggregate value; it is not a member of `dim_department`.
+- Therefore, `fact_forecast.department_id` intentionally has no foreign key to `dim_department`. The `forecast_month_key` foreign key to `dim_date` is enforced.
+- Preserve `ALL` as the overall forecast category. Do not create a fictitious department dimension member just to satisfy the foreign key.
