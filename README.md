@@ -103,3 +103,62 @@ These are the results of the latest recorded run and should be updated if the so
 ## 10. Submission Checklist
 
 Before submission, verify the source files, clean outputs, quarantine outputs, summary logs, automated tests, Docker execution, and required GitHub evidence.
+
+## 11. Task 2 — Data Warehouse and Star Schema
+
+### Warehouse Design
+
+The PostgreSQL warehouse is stored in the `pulseiq_analytics` database under the `warehouse` schema. It contains 11 dimension tables and 12 fact tables.
+
+- `docs/create_dimensions.sql` — dimension table definitions.
+- `docs/create_facts.sql` — fact table definitions.
+- `docs/star_schema.mmd` — Mermaid entity-relationship diagram.
+- `docs/evidence/warehouse_row_counts.csv` — recorded fact row counts.
+- `docs/evidence/warehouse_exceptions.md` — documented data-quality and mapping exceptions.
+
+The fact tables connect to dimensions through surrogate or business keys, as appropriate. Primary keys are defined for all 12 fact tables, and foreign-key constraints enforce the supported relationships.
+
+### Fact Tables and Row-Count Reconciliation
+
+| Fact table | Warehouse rows | Reconciliation basis |
+|---|---:|---|
+| `fact_payroll` | 7,344 | Raw source rows |
+| `fact_attendance_monthly` | 7,343 | Raw source rows |
+| `fact_leave` | 3,441 | Raw source rows |
+| `fact_headcount_monthly` | 891 | Raw source rows |
+| `fact_ledger` | 6,784 | Raw source rows |
+| `fact_invoice` | 743 | Raw source rows |
+| `fact_invoice_payment` | 709 | Raw source rows |
+| `fact_expense` | 501 | Raw source rows |
+| `fact_task` | 28,848 | Task 1 passed rows |
+| `fact_anomaly` | 405 | Task 1 passed rows |
+| `fact_attrition_risk` | 425 | Task 1 passed rows |
+| `fact_forecast` | 72 | Task 1 passed rows |
+| **Total** | **56,506** | |
+
+The eight raw-source facts retain their source row counts. The four Task 1-validated feeds contain their passed-row counts, excluding quarantined records.
+
+### Historical Employee Mapping
+
+Employee facts use `employee_key` to reference a specific employee dimension version. This supports historical reporting against the employee version assigned to a fact, rather than joining only on `employee_id` and potentially using the wrong department after an employee transfer.
+
+For payroll and attendance, the intended historical version is the one valid at the reporting period end. However, source employee-history gaps remain unresolved:
+
+- Payroll: 82 mapped rows have no employee version covering the period end; two additional records use the documented unknown key `-1`.
+- Attendance: 85 rows have no employee version covering the period end.
+- These records are documented in `docs/evidence/warehouse_exceptions.md`. No employee versions or validity dates were invented to hide the gaps.
+
+Task records have no suitable event date for historical resolution, so they use the unique employee version marked as current.
+
+### Orphan Checks and Exceptions
+
+Foreign-key constraints enforce the supported fact-to-dimension relationships. Additional checks found zero orphan rows for the tested special relationships:
+
+- Payroll employee keys: zero orphan rows; two documented unknown keys.
+- Forecast departments: zero orphan rows; 12 intentional `ALL` aggregate rows.
+- Ledger department assignments: zero invalid non-null department keys; 5,688 NULL assignments awaiting business-rule confirmation.
+- Anomaly employee keys: zero orphan rows; 21 unresolved employee mappings stored as NULL.
+
+A missing or unresolved employee mapping is not the same as a foreign-key orphan. Known exceptions and source-history limitations are recorded in `docs/evidence/warehouse_exceptions.md`.
+
+The date dimension extends through `2027-03-31` to cover forecast months. Holiday and working-day flags after `2026-12-31` are provisional and must be refreshed against an authoritative calendar before operational use.
