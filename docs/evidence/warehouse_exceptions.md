@@ -64,3 +64,12 @@ The two unresolved payroll records remain included in the payroll count.
 - The ETL validation explicitly allows `ALL` as a special aggregate value; it is not a member of `dim_department`.
 - Therefore, `fact_forecast.department_id` intentionally has no foreign key to `dim_department`. The `forecast_month_key` foreign key to `dim_date` is enforced.
 - Preserve `ALL` as the overall forecast category. Do not create a fictitious department dimension member just to satisfy the foreign key.
+
+### Payroll and attendance historical coverage
+
+- Payroll contains 7,344 rows; 2 use the documented unknown employee key `-1`.
+- Of the 7,342 payroll rows with mapped employees, 82 assigned employee versions do not cover the payroll period-end date.
+- Attendance contains 7,343 rows; 85 assigned employee versions do not cover the attendance period-end date.
+- The original DuckDB source also contains employee-history coverage gaps: 84 payroll rows and 85 attendance rows have no employee version valid at their reporting date.
+- All mapped payroll and attendance rows match their recorded department to the assigned employee dimension department.
+- These date-coverage gaps originate in the source history. Do not invent employee versions or extend validity dates without source evidence. Historical mapping requires source-data clarification.
