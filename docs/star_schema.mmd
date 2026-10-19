@@ -1,0 +1,48 @@
+erDiagram
+    dim_employee ||--o{ fact_payroll : "employee_key"
+    dim_date ||--o{ fact_payroll : "date_key"
+    dim_department ||--o{ fact_payroll : "department_id"
+    dim_role ||--o{ fact_payroll : "role_id"
+
+    dim_employee ||--o{ fact_attendance_monthly : "employee_key"
+    dim_date ||--o{ fact_attendance_monthly : "date_key"
+    dim_department ||--o{ fact_attendance_monthly : "department_id"
+
+    dim_employee ||--o{ fact_leave : "employee_key"
+    dim_leave_type ||--o{ fact_leave : "leave_type_code"
+    dim_date ||--o{ fact_leave : "start_date_key"
+    dim_date ||--o{ fact_leave : "end_date_key"
+
+    dim_department ||--o{ fact_headcount_monthly : "department_id"
+    dim_date ||--o{ fact_headcount_monthly : "date_key"
+
+    dim_account ||--o{ fact_ledger : "account_code"
+    dim_department o|--o{ fact_ledger : "optional cost center"
+    dim_date ||--o{ fact_ledger : "date_key"
+
+    dim_client ||--o{ fact_invoice : "client_id"
+    dim_account ||--o{ fact_invoice : "service_line_account"
+    dim_date ||--o{ fact_invoice : "invoice_date_key"
+
+    fact_invoice ||--o{ fact_invoice_payment : "invoice_id"
+    dim_date ||--o{ fact_invoice_payment : "payment_date_key"
+
+    dim_vendor ||--o{ fact_expense : "vendor_id"
+    dim_account ||--o{ fact_expense : "category_account"
+    dim_department ||--o{ fact_expense : "department_id"
+    dim_date ||--o{ fact_expense : "expense_date_key"
+
+    dim_team ||--o{ fact_task : "team_id"
+    dim_sprint ||--o{ fact_task : "sprint_id"
+    dim_employee o|--o{ fact_task : "employee_key (current version)"
+
+    dim_employee o|--o{ fact_anomaly : "employee_key (month-end version)"
+    dim_department o|--o{ fact_anomaly : "department_id"
+    dim_date ||--o{ fact_anomaly : "period_key"
+
+    dim_employee ||--o{ fact_attrition_risk : "employee_key"
+    dim_department ||--o{ fact_attrition_risk : "department_id"
+    dim_date ||--o{ fact_attrition_risk : "as_of_date_key"
+
+    dim_department ||--o{ fact_forecast : "department_id"
+    dim_date ||--o{ fact_forecast : "forecast_month_key"

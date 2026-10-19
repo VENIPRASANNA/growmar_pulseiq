@@ -1,0 +1,13 @@
+table_name,row_count
+fact_anomaly,405
+fact_attendance_monthly,7343
+fact_attrition_risk,425
+fact_expense,501
+fact_forecast,72
+fact_headcount_monthly,891
+fact_invoice,743
+fact_invoice_payment,709
+fact_leave,3441
+fact_ledger,6784
+fact_payroll,7344
+fact_task,28848
