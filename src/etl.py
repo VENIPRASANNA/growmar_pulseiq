@@ -3,6 +3,9 @@
 
 from pathlib import Path
 import json
+import csv
+import traceback
+from datetime import datetime, timezone
 import re
 
 import duckdb
@@ -346,7 +349,48 @@ def validate_table(con, table):
     return passed, rejected, summary
 
 
+def write_etl_run_log(started_at, finished_at, status, error_message=""):
+    """Append an ETL execution record to logs/etl_run_log.csv."""
+    log_path = LOG_DIR / "etl_run_log.csv"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    write_header = not log_path.exists()
+
+    with log_path.open("a", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(
+            f,
+            fieldnames=["started_at", "finished_at", "status", "error_message"],
+        )
+        if write_header:
+            writer.writeheader()
+        writer.writerow({
+            "started_at": started_at.isoformat(),
+            "finished_at": finished_at.isoformat(),
+            "status": status,
+            "error_message": error_message,
+        })
+
+
 def main():
+    started_at = datetime.now(timezone.utc)
+    status = "SUCCESS"
+    error_message = ""
+
+    try:
+        _main_pipeline()
+    except Exception as exc:
+        status = "FAILED"
+        error_message = f"{type(exc).__name__}: {exc}"
+        raise
+    finally:
+        write_etl_run_log(
+            started_at,
+            datetime.now(timezone.utc),
+            status,
+            error_message,
+        )
+
+
+def _main_pipeline():
     for folder in [CLEAN_DIR, REJECTED_DIR, LOG_DIR]:
         folder.mkdir(parents=True, exist_ok=True)
 
