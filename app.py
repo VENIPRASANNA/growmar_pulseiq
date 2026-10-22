@@ -114,7 +114,43 @@ if not dept.empty:
         f"with {int(top['headcount']):,} employees."
     )
 
+st.subheader("Department Headcount Share (%)")
+
+share = duckdb.connect(str(DB), read_only=True)
+try:
+    share_df = share.execute("""
+        SELECT department_name, department_headcount,
+               total_headcount, headcount_share_pct
+        FROM metrics.m32_department_headcount_share
+        ORDER BY department_headcount DESC
+    """).fetchdf()
+finally:
+    share.close()
+
+if not share_df.empty:
+    share_fig = px.bar(
+        share_df,
+        x="headcount_share_pct",
+        y="department_name",
+        orientation="h",
+        labels={
+            "headcount_share_pct": "Headcount share (%)",
+            "department_name": "Department",
+        },
+        color_discrete_sequence=["#247BA0"],
+    )
+    share_fig.update_layout(template="plotly_white")
+    st.plotly_chart(share_fig, use_container_width=True)
+
+    top_share = share_df.iloc[0]
+    st.caption(
+        f"Insight: {top_share['department_name']} accounts for "
+        f"{top_share['headcount_share_pct']:.2f}% of the governed "
+        f"department headcount total ({int(top_share['department_headcount'])} "
+        f"of {int(top_share['total_headcount'])} employees)."
+    )
+
 st.info(
-    "Headcount comes from governed metric views. Location-tier and work-mode "
-    "breakdowns are current snapshots and will be shown on the Workforce Details page."
+    "Department share uses the latest month in the governed department view. "
+    "Location-tier and work-mode breakdowns are current workforce snapshots."
 )
