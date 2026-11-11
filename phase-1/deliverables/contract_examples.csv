@@ -1,0 +1,35 @@
+feed,column_name,data_type,nullable,rule_or_allowed_values
+AI anomaly results (fact_anomaly),anomaly_score,"decimal(4,3)",false,"0 to 1, higher is more unusual"
+AI anomaly results (fact_anomaly),employee_id,string,false,exists in dim_employee
+AI anomaly results (fact_anomaly),flagged,char(1),false,Y or N
+AI anomaly results (fact_anomaly),model_version,string,false,semantic version text
+AI anomaly results (fact_anomaly),money_at_risk,"decimal(14,2)",true,blank for attendance rows
+AI anomaly results (fact_anomaly),period,date,false,month end or start date
+AI anomaly results (fact_anomaly),reason_code,string,false,one of the published codes
+AI anomaly results (fact_anomaly),reason_text,string,false,plain English
+AI anomaly results (fact_anomaly),record_id,string,false,exists in source dataset
+AI anomaly results (fact_anomaly),result_id,string,false,"unique, format AN-nnnn"
+AI anomaly results (fact_anomaly),scored_at,timestamp,false,UTC
+AI anomaly results (fact_anomaly),source_dataset,string,false,attendance_monthly_features | payroll_monthly_features
+AI forecast (fact_forecast),department_id,string,false,dept id or ALL
+AI forecast (fact_forecast),forecast_id,string,false,unique FC-nnnn
+AI forecast (fact_forecast),forecast_month,date,false,first day of month
+AI forecast (fact_forecast),forecast_value,decimal,false,>= 0
+AI forecast (fact_forecast),lower_80,decimal,false,<= forecast_value
+AI forecast (fact_forecast),method,string,false,text
+AI forecast (fact_forecast),metric,string,false,headcount_end | attrition_rate_monthly_pct
+AI forecast (fact_forecast),trained_through,string,false,YYYY-MM
+AI forecast (fact_forecast),upper_80,decimal,false,>= forecast_value
+Task board (fact_task),assignee_employee_id,string,false,exists in dim_employee
+Task board (fact_task),completed_date,date,true,required when status = Done; >= started_date
+Task board (fact_task),created_date,date,false,<= started_date
+Task board (fact_task),due_date,date,false,sprint end date
+Task board (fact_task),priority,string,false,P1..P4
+Task board (fact_task),reopened_count,int,false,>= 0
+Task board (fact_task),sprint_id,string,false,exists in dim_sprint
+Task board (fact_task),started_date,date,true,blank only when To Do
+Task board (fact_task),status,string,false,Done | In Progress | Blocked | To Do | Cancelled
+Task board (fact_task),story_points,int,false,"1,2,3,5,8,13"
+Task board (fact_task),task_id,string,false,unique TASK-nnnnn
+Task board (fact_task),task_type,string,false,Feature | Bug | Chore | Spike
+Task board (fact_task),team_id,string,false,exists in dim_team
