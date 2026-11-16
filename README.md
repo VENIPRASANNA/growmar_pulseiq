@@ -499,3 +499,124 @@ https://github.com/VENIPRASANNA/growmar_pulseiq
 
 - [Phase 1](phase-1/README.md)
 - [Phase 2](phase-
+
+---
+
+# 14. PHASE 4 – Automated Reporting and Release Preparation
+
+## Task 16 – Automated Monthly Report Builder
+
+PulseIQ includes an automated monthly PDF reporting system that retrieves workforce and business metrics from the existing DuckDB database.
+
+### Key Features
+
+- Generates monthly PDF reports using a single command.
+- Supports user-selected reporting months.
+- Includes reporting period and data cut-off information.
+- Retrieves workforce, attrition, attendance, payroll and financial metrics.
+- Provides department-wise workforce distribution.
+- Applies minimum group-size privacy thresholds.
+- Displays missing data as unavailable instead of imputing values.
+
+### Monthly Report Contents
+
+1. Executive KPI Summary
+2. Workforce Overview
+3. Attrition Analysis
+4. Attendance and Overtime
+5. Payroll and Financial Overview
+6. Department-wise Headcount
+7. Data Quality, Privacy and Limitations
+
+### Technology Used
+
+- Python 3.12
+- DuckDB
+- Pandas
+- ReportLab
+
+### Dependency Installation
+
+```bash
+python -m pip install -r 05_Starter/requirements.txt
+```
+
+### Generate Monthly Reports
+
+September 2026:
+
+```bash
+python build_report.py --month 2026-09
+```
+
+August 2026:
+
+```bash
+python build_report.py --month 2026-08
+```
+
+Generated reports are saved in the `reports/` directory.
+
+### Evidence
+
+Sample report:
+
+`evidence/phase-4/PulseIQ_Monthly_Report_2026-09.pdf`
+
+### Release Preparation
+
+The release candidate includes dependency version pinning, automated report generation, clean-environment testing and release tagging.
+
+Git release tag: `v1.0.0-rc1`
+
+
+### Automated Monthly Scheduling
+
+PulseIQ uses Ubuntu cron to automatically generate monthly workforce reports.
+
+**Schedule:**
+- Frequency: First day of every month
+- Execution time: 9:00 AM IST (assuming system timezone is IST)
+- Reporting period: Previous calendar month
+- Scheduler: Ubuntu cron
+
+**Cron Configuration:**
+
+```cron
+0 9 1 * * /bin/bash /home/prasanna/Desktop/GROW-TASK/pulseiq/scripts/run_monthly_report.sh
+```
+
+The scheduling script automatically identifies the previous month, executes the report builder and records execution details in `logs/monthly_report.log`.
+
+The Ubuntu machine must be powered on for the scheduled execution.
+
+### Complete Dependency Pinning
+
+All 45 direct and transitive Python packages are pinned to exact versions in:
+
+`05_Starter/requirements.txt`
+
+Install dependencies using:
+
+```bash
+python -m pip install -r 05_Starter/requirements.txt
+```
+
+### Clean Environment Testing
+
+The report builder was tested using a fresh Python 3.12 virtual environment.
+
+Testing included:
+1. Creating a new virtual environment.
+2. Installing all pinned dependencies.
+3. Running `pip check` successfully.
+4. Generating the October 2026 PDF report.
+5. Verifying the generated PDF.
+
+**Test Result:** PASSED
+
+### Task 16 Evidence
+
+- Sample PDF: `evidence/phase-4/PulseIQ_Monthly_Report_2026-09.pdf`
+- Clean environment test: `evidence/phase-4/clean_environment_test.txt`
+- Automated scheduling log: `logs/monthly_report.log`

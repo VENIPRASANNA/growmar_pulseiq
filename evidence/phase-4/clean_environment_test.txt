@@ -1,0 +1,28 @@
+
+PULSEIQ – TASK 16
+CLEAN ENVIRONMENT TEST REPORT
+
+Python Version: 3.12
+Operating System: Ubuntu
+Test Environment: Fresh virtual environment
+Environment Path: /tmp/pulseiq-task16-test
+
+TEST PROCEDURE:
+1. Created a new Python virtual environment.
+2. Installed dependencies using 05_Starter/requirements.txt.
+3. Executed build_report.py using the fresh environment.
+4. Generated the October 2026 monthly workforce report.
+5. Verified the generated PDF file and page count.
+
+COMMAND:
+python build_report.py --month 2026-10 --db 05_Starter/pulseiq.duckdb --output-dir /tmp/pulseiq-task16-reports
+
+RESULT:
+Report generated successfully.
+
+Output File:
+PulseIQ_Monthly_Report_2026-10.pdf
+
+PDF Page Count: 1
+
+FINAL STATUS: PASSED

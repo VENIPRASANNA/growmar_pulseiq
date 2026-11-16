@@ -31,4 +31,9 @@ data/dim_team_source.csv
 data/dim_sprint_source.csv
 
 # Local screenshots and temporary evidence
-/evidence/
+/evidence/*
+!/evidence/phase-4/
+!/evidence/phase-4/**
+
+# Generated monthly PDF reports
+/reports/
