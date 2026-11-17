@@ -20,7 +20,7 @@ def load_data():
             HOSTED_DIR / "workforce_monthly.parquet"
         )
         movements = pd.read_parquet(
-            HOSTED_DIR / "workforce_movements.parquet"
+            HOSTED_DIR / "workforce_movements_quarterly.parquet"
         )
         hires = movements[
             ["month_start_date", "department_id", "hires"]
