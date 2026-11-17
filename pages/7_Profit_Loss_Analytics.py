@@ -2,6 +2,8 @@
 import streamlit as st
 import duckdb
 import pandas as pd
+import plotly.express as px
+import os
 from pathlib import Path
 
 # --------------------------------------------------
@@ -24,6 +26,200 @@ st.title("💰 Profit & Loss Analytics")
 st.caption(
     "Financial performance, expense analysis and vendor spending | PulseIQ"
 )
+
+# --------------------------------------------------
+# HOSTED PROFIT & LOSS DASHBOARD
+# --------------------------------------------------
+
+HOSTED_MODE = (
+    os.getenv("PULSEIQ_HOSTED_MODE", "").lower() == "true"
+    or not DB_PATH.exists()
+)
+
+if HOSTED_MODE:
+    st.subheader("Company-wide Profit & Loss Overview")
+    st.caption(
+        "Public dashboard using curated company-wide monthly financial aggregates."
+    )
+
+    hosted_file = (
+        Path(__file__).resolve().parents[1]
+        / "data"
+        / "hosted"
+        / "finance_monthly.parquet"
+    )
+
+    try:
+        if not hosted_file.exists():
+            raise FileNotFoundError("finance_monthly.parquet is unavailable.")
+
+        pnl = pd.read_parquet(hosted_file)
+
+    except Exception as error:
+        st.error(f"Unable to load hosted financial data: {error}")
+        st.stop()
+
+    if pnl.empty:
+        st.warning("No financial records are available.")
+        st.stop()
+
+    pnl["month_start_date"] = pd.to_datetime(pnl["month_start_date"])
+    pnl = pnl.sort_values("month_start_date").copy()
+
+    pnl["expenses"] = pnl["revenue"] - pnl["net_profit"]
+
+    months = ["All Months"] + [
+        date.strftime("%Y-%m")
+        for date in pnl["month_start_date"]
+    ]
+
+    selected_month = st.sidebar.selectbox(
+        "Reporting period",
+        months
+    )
+
+    if selected_month != "All Months":
+        filtered = pnl[
+            pnl["month_start_date"].dt.strftime("%Y-%m")
+            == selected_month
+        ].copy()
+    else:
+        filtered = pnl.copy()
+
+    latest = filtered.iloc[-1]
+
+    total_revenue = filtered["revenue"].sum()
+    total_expenses = filtered["expenses"].sum()
+    total_profit = filtered["net_profit"].sum()
+
+    overall_margin = (
+        total_profit / total_revenue * 100
+        if total_revenue else 0
+    )
+
+    st.subheader("Financial Overview")
+
+    c1, c2, c3, c4 = st.columns(4)
+
+    c1.metric("Revenue", f"₹{total_revenue:,.0f}")
+    c2.metric("Expenses", f"₹{total_expenses:,.0f}")
+    c3.metric("Net Profit", f"₹{total_profit:,.0f}")
+    c4.metric("Net Profit Margin", f"{overall_margin:.2f}%")
+
+    st.caption(
+        f"Latest reporting month: {latest['month_start_date']:%B %Y} "
+        f"| Data cut-off: "
+        f"{latest['month_start_date'] + pd.offsets.MonthEnd(0):%d %B %Y}"
+    )
+
+    st.divider()
+    st.subheader("Monthly Revenue vs Expenses")
+
+    chart_data = filtered.melt(
+        id_vars="month_start_date",
+        value_vars=["revenue", "expenses"],
+        var_name="measure",
+        value_name="amount",
+    )
+
+    chart_data["measure"] = chart_data["measure"].map({
+        "revenue": "Revenue",
+        "expenses": "Expenses",
+    })
+
+    fig = px.line(
+        chart_data,
+        x="month_start_date",
+        y="amount",
+        color="measure",
+        markers=True,
+        title="Monthly Revenue and Expenses",
+        labels={
+            "month_start_date": "Month",
+            "amount": "Amount (₹)",
+            "measure": "Financial measure",
+        },
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+    st.subheader("Net Profit Trend")
+
+    profit_fig = px.bar(
+        filtered,
+        x="month_start_date",
+        y="net_profit",
+        title="Monthly Net Profit",
+        labels={
+            "month_start_date": "Month",
+            "net_profit": "Net Profit (₹)",
+        },
+    )
+    st.plotly_chart(profit_fig, use_container_width=True)
+
+    st.subheader("Operating Margin Trend")
+
+    margin_fig = px.line(
+        filtered,
+        x="month_start_date",
+        y="operating_margin_pct",
+        markers=True,
+        title="Monthly Operating Margin",
+        labels={
+            "month_start_date": "Month",
+            "operating_margin_pct": "Operating Margin (%)",
+        },
+    )
+    st.plotly_chart(margin_fig, use_container_width=True)
+
+    st.divider()
+    st.subheader("Monthly Financial Breakdown")
+
+    display = filtered.rename(columns={
+        "month_start_date": "Month",
+        "revenue": "Revenue (₹)",
+        "expenses": "Expenses (₹)",
+        "net_profit": "Net Profit (₹)",
+        "operating_margin_pct": "Operating Margin (%)",
+        "payroll_cost_ledger": "Payroll Cost (₹)",
+        "payroll_pct_revenue": "Payroll / Revenue (%)",
+    })
+
+    st.dataframe(
+        display,
+        hide_index=True,
+        use_container_width=True,
+    )
+
+    st.divider()
+    st.subheader("Business Insights")
+
+    best_profit = filtered.loc[filtered["net_profit"].idxmax()]
+    highest_revenue = filtered.loc[filtered["revenue"].idxmax()]
+    lowest_margin = filtered.loc[
+        filtered["operating_margin_pct"].idxmin()
+    ]
+
+    st.markdown(
+        f"""
+        - **Highest Revenue:** {highest_revenue['month_start_date']:%B %Y}
+          — ₹{highest_revenue['revenue']:,.0f}.
+        - **Highest Net Profit:** {best_profit['month_start_date']:%B %Y}
+          — ₹{best_profit['net_profit']:,.0f}.
+        - **Lowest Operating Margin:** {lowest_margin['month_start_date']:%B %Y}
+          — {lowest_margin['operating_margin_pct']:.2f}%.
+        """
+    )
+
+    st.info(
+        "Public data contains curated company-wide monthly aggregates only. "
+        "Vendor names, individual expense records and detailed reconciliation "
+        "data are not published. Expenses are derived as revenue minus net profit."
+    )
+
+    st.divider()
+    st.caption("PulseIQ • GROWMAR Phase 2 Task 17 • Hosted Profit & Loss Dashboard")
+    st.stop()
+
 
 # --------------------------------------------------
 # DATA LOADING

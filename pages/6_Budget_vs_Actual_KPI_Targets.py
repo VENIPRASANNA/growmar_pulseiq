@@ -3,7 +3,9 @@ from pathlib import Path
 
 import duckdb
 import pandas as pd
+import plotly.express as px
 import streamlit as st
+import os
 
 
 # =========================================================
@@ -26,6 +28,237 @@ DB_PATH = (
     / "05_Starter"
     / "pulseiq.duckdb"
 )
+
+
+# =========================================================
+# HOSTED FINANCIAL PERFORMANCE
+# =========================================================
+HOSTED_MODE = (
+    os.getenv("PULSEIQ_HOSTED_MODE", "").lower() == "true"
+    or not DB_PATH.exists()
+)
+
+if HOSTED_MODE:
+    st.title("Financial Performance & KPI Overview")
+    st.caption(
+        "Company-wide financial performance and curated operational indicators"
+    )
+
+    hosted_dir = Path("data/hosted")
+
+    def read_hosted(name):
+        file = hosted_dir / name
+        if not file.exists():
+            raise FileNotFoundError(f"Hosted dataset unavailable: {name}")
+        return pd.read_parquet(file)
+
+    try:
+        finance = read_hosted("finance_monthly.parquet")
+        attendance = read_hosted("attendance_monthly.parquet")
+        attrition = read_hosted("attrition_rolling_12m.parquet")
+        productivity = read_hosted("productivity_sprint.parquet")
+    except Exception as exc:
+        st.error(f"Unable to load hosted KPI data: {exc}")
+        st.stop()
+
+    if finance.empty:
+        st.warning("No company-wide financial data is available.")
+        st.stop()
+
+    finance["month_start_date"] = pd.to_datetime(
+        finance["month_start_date"]
+    )
+    finance = finance.sort_values("month_start_date")
+    latest = finance.iloc[-1]
+
+    st.subheader("Company-wide financial overview")
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Revenue", f"₹{latest['revenue']:,.0f}")
+    c2.metric("Net profit", f"₹{latest['net_profit']:,.0f}")
+    c3.metric("Operating margin", f"{latest['operating_margin_pct']:.2f}%")
+    c4.metric(
+        "Payroll cost / revenue",
+        f"{latest['payroll_pct_revenue']:.2f}%"
+    )
+
+    st.caption(
+        f"Latest reporting month: {latest['month_start_date']:%B %Y} "
+        f"| Data cut-off: {latest['month_start_date'] + pd.offsets.MonthEnd(0):%d %B %Y}"
+    )
+
+    st.divider()
+    st.subheader("Monthly financial performance")
+
+    financial_measures = finance.melt(
+        id_vars="month_start_date",
+        value_vars=["revenue", "net_profit", "payroll_cost_ledger"],
+        var_name="measure",
+        value_name="amount",
+    )
+
+    financial_measures["measure"] = financial_measures["measure"].map({
+        "revenue": "Revenue",
+        "net_profit": "Net profit",
+        "payroll_cost_ledger": "Payroll cost (ledger)",
+    })
+
+    fig = px.line(
+        financial_measures,
+        x="month_start_date",
+        y="amount",
+        color="measure",
+        markers=True,
+        title="Revenue, net profit and ledger payroll cost",
+        labels={
+            "month_start_date": "Month",
+            "amount": "Amount (₹)",
+            "measure": "Financial measure",
+        },
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+    margin_fig = px.line(
+        finance,
+        x="month_start_date",
+        y="operating_margin_pct",
+        markers=True,
+        title="Monthly operating margin",
+        labels={
+            "month_start_date": "Month",
+            "operating_margin_pct": "Operating margin (%)",
+        },
+    )
+    st.plotly_chart(margin_fig, use_container_width=True)
+
+    st.markdown("**Monthly financial data**")
+    st.dataframe(
+        finance.rename(columns={
+            "month_start_date": "Month",
+            "revenue": "Revenue (₹)",
+            "net_profit": "Net profit (₹)",
+            "operating_margin_pct": "Operating margin (%)",
+            "payroll_cost_ledger": "Payroll cost — ledger (₹)",
+            "payroll_pct_revenue": "Payroll / revenue (%)",
+        }),
+        hide_index=True,
+        use_container_width=True,
+    )
+
+    st.divider()
+    st.subheader("Operational KPI indicators")
+
+    if not attendance.empty:
+        attendance["month_start_date"] = pd.to_datetime(
+            attendance["month_start_date"]
+        )
+        attendance_summary = (
+            attendance.groupby("month_start_date", as_index=False)
+            .agg(
+                average_department_attendance=(
+                    "attendance_rate_pct", "mean"
+                ),
+                published_departments=("department_id", "nunique"),
+            )
+            .sort_values("month_start_date")
+        )
+
+        attendance_latest = attendance_summary.iloc[-1]
+
+        st.metric(
+            "Latest average department attendance",
+            f"{attendance_latest['average_department_attendance']:.2f}%"
+        )
+        st.caption(
+            f"Unweighted average across "
+            f"{int(attendance_latest['published_departments'])} "
+            "published departments. This is not a company-wide "
+            "employee-weighted attendance rate."
+        )
+
+        attendance_fig = px.line(
+            attendance_summary,
+            x="month_start_date",
+            y="average_department_attendance",
+            markers=True,
+            title="Average published department attendance",
+            labels={
+                "month_start_date": "Month",
+                "average_department_attendance": "Average attendance (%)",
+            },
+        )
+        st.plotly_chart(attendance_fig, use_container_width=True)
+
+    if not attrition.empty:
+        attrition["month_start_date"] = pd.to_datetime(
+            attrition["month_start_date"]
+        )
+        attrition = attrition.sort_values("month_start_date")
+        attrition_latest = attrition.iloc[-1]
+
+        a1, a2 = st.columns(2)
+        a1.metric(
+            "Rolling 12-month attrition",
+            f"{attrition_latest['attrition_rate_12m_pct']:.2f}%"
+        )
+        a2.metric(
+            "Rolling 12-month voluntary attrition",
+            f"{attrition_latest['voluntary_attrition_rate_12m_pct']:.2f}%"
+        )
+
+        attrition_fig = px.line(
+            attrition,
+            x="month_start_date",
+            y=[
+                "attrition_rate_12m_pct",
+                "voluntary_attrition_rate_12m_pct",
+            ],
+            markers=True,
+            title="Annual rolling attrition snapshots",
+            labels={
+                "month_start_date": "Snapshot month",
+                "value": "Attrition (%)",
+                "variable": "Measure",
+            },
+        )
+        st.plotly_chart(attrition_fig, use_container_width=True)
+
+        st.caption(
+            "Annual snapshots use overlapping rolling 12-month windows; "
+            "year-to-year changes are not independent cohorts."
+        )
+
+    if not productivity.empty:
+        completed = pd.to_numeric(
+            productivity["completed_tasks"], errors="coerce"
+        ).sum()
+        eligible = pd.to_numeric(
+            productivity["eligible_tasks"], errors="coerce"
+        ).sum()
+
+        if eligible > 0:
+            completion_rate = 100 * completed / eligible
+            st.metric(
+                "Aggregated task completion rate",
+                f"{completion_rate:.2f}%"
+            )
+            st.caption(
+                "Calculated from summed published team-sprint task counts, "
+                "not by averaging sprint percentages."
+            )
+
+    st.info(
+        "Public view excludes department budget rankings, individual records "
+        "and unpublished KPI targets. Budget-versus-actual comparisons are "
+        "not shown because a validated company-wide budget aggregate is "
+        "not available in the hosted dataset."
+    )
+
+    st.divider()
+    st.caption(
+        "PulseIQ • GROWMAR Phase 2 Task 17 • Curated hosted aggregates"
+    )
+    st.stop()
 
 
 # =========================================================

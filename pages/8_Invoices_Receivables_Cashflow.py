@@ -1,7 +1,9 @@
 
 import streamlit as st
+import os
 import duckdb
 import pandas as pd
+import plotly.express as px
 from pathlib import Path
 
 # ============================================================
@@ -16,8 +18,8 @@ st.set_page_config(
 
 st.title("💳 Invoices, Receivables & Cash Flow")
 st.caption(
-    "PulseIQ | Task 12 | Invoice ageing, client payment "
-    "performance and cash flow analytics"
+    "PulseIQ | Company-wide receivables, invoice status "
+    "and cash flow analytics"
 )
 
 # ============================================================
@@ -29,6 +31,271 @@ DB_PATH = (
     / "05_Starter"
     / "pulseiq.duckdb"
 )
+
+
+
+# ============================================================
+# HOSTED PAGE 8 - PUBLIC AGGREGATED DASHBOARD
+# ============================================================
+
+HOSTED_MODE = (
+    os.getenv("PULSEIQ_HOSTED_MODE", "").lower() == "true"
+    or not DB_PATH.exists()
+)
+
+if HOSTED_MODE:
+    HOSTED_DATA = DB_PATH.parents[1] / "data" / "hosted"
+
+    @st.cache_data(ttl=300)
+    def load_hosted_page8():
+        ageing = pd.read_parquet(
+            HOSTED_DATA / "receivables_ageing.parquet"
+        )
+        invoice_status = pd.read_parquet(
+            HOSTED_DATA / "invoice_status_summary.parquet"
+        )
+        cashflow = pd.read_parquet(
+            HOSTED_DATA / "cashflow_monthly.parquet"
+        )
+        receivables = pd.read_parquet(
+            HOSTED_DATA / "receivables_summary.parquet"
+        )
+        return ageing, invoice_status, cashflow, receivables
+
+    ageing, invoice_status, cashflow, receivables = load_hosted_page8()
+
+    cutoff = pd.to_datetime(
+        receivables["report_date"].iloc[0]
+    ).strftime("%d %B %Y")
+
+    st.info(f"Data cut-off: {cutoff}")
+
+    def format_inr(value):
+        return f"₹{value:,.0f}"
+
+    # --------------------------------------------------------
+    # 1. RECEIVABLES KPIs
+    # --------------------------------------------------------
+
+    st.subheader("Receivables Overview")
+
+    dso = float(receivables["dso_days"].iloc[0])
+    outstanding = float(
+        receivables["closing_receivables"].iloc[0]
+    )
+    credit_sales = float(
+        receivables["credit_sales_90d"].iloc[0]
+    )
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Closing Receivables", format_inr(outstanding))
+    c2.metric("Days Sales Outstanding (DSO)", f"{dso:.1f} days")
+    c3.metric("Credit Sales (90 days)", format_inr(credit_sales))
+
+    # --------------------------------------------------------
+    # 2. RECEIVABLES AGEING
+    # --------------------------------------------------------
+
+    st.subheader("Receivables Ageing")
+
+    ageing["outstanding_amount"] = pd.to_numeric(
+        ageing["outstanding_amount"], errors="coerce"
+    )
+    ageing["invoice_count"] = pd.to_numeric(
+        ageing["invoice_count"], errors="coerce"
+    )
+
+    a1, a2 = st.columns(2)
+    for _, row in ageing.iterrows():
+        if row["ageing_category"] == "Overdue":
+            a1.metric(
+                "Overdue Receivables",
+                format_inr(row["outstanding_amount"]),
+                f'{int(row["invoice_count"])} invoices'
+            )
+        else:
+            a2.metric(
+                "Not Yet Due",
+                format_inr(row["outstanding_amount"]),
+                f'{int(row["invoice_count"])} invoices'
+            )
+
+    ageing["outstanding_amount"] = pd.to_numeric(
+        ageing["outstanding_amount"], errors="coerce"
+    )
+
+    ageing_fig = px.bar(
+        ageing,
+        x="ageing_category",
+        y="outstanding_amount",
+        text="outstanding_amount",
+        title="Outstanding Receivables by Ageing Category",
+        labels={
+            "ageing_category": "Ageing Category",
+            "outstanding_amount": "Outstanding Amount (₹)"
+        }
+    )
+    ageing_fig.update_traces(
+        texttemplate="₹%{y:,.0f}",
+        textposition="outside"
+    )
+    ageing_fig.update_layout(
+        xaxis_title="Ageing Category",
+        yaxis_title="Outstanding Amount (₹)"
+    )
+    st.plotly_chart(ageing_fig, use_container_width=True)
+
+    # --------------------------------------------------------
+    # 3. INVOICE STATUS
+    # --------------------------------------------------------
+
+    st.subheader("Invoice Status Summary")
+
+    invoice_status["invoice_count"] = pd.to_numeric(
+        invoice_status["invoice_count"], errors="coerce"
+    )
+
+    s1, s2 = st.columns(2)
+    for _, row in invoice_status.iterrows():
+        if row["invoice_category"] == "Paid":
+            s1.metric("Paid Invoices", f'{int(row["invoice_count"]):,}')
+        else:
+            s2.metric("Open Invoices", f'{int(row["invoice_count"]):,}')
+
+    status_display = invoice_status[
+        ["invoice_category", "invoice_count", "invoice_value"]
+    ].copy()
+
+    status_display["invoice_value"] = status_display[
+        "invoice_value"
+    ].map(lambda value: f"₹{value:,.0f}")
+
+    st.dataframe(
+        status_display.rename(columns={
+            "invoice_category": "Category",
+            "invoice_count": "Invoice Count",
+            "invoice_value": "Invoice Value"
+        }),
+        use_container_width=True,
+        hide_index=True
+    )
+
+    # --------------------------------------------------------
+    # 4. MONTHLY CASH FLOW
+    # --------------------------------------------------------
+
+    st.subheader("Monthly Cash Flow")
+
+    cashflow["month_start_date"] = pd.to_datetime(
+        cashflow["month_start_date"]
+    )
+
+    cashflow = cashflow.sort_values("month_start_date")
+    cashflow["month_label"] = cashflow["month_start_date"].dt.strftime("%b %Y")
+
+    st.caption(
+        "Cash inflow represents recorded invoice payments. "
+        "Cash outflow represents paid expense records."
+    )
+
+    cashflow_chart = cashflow[
+        ["month_label", "cash_inflow", "cash_outflow"]
+    ].rename(columns={
+        "cash_inflow": "Cash Inflow",
+        "cash_outflow": "Cash Outflow"
+    })
+
+    cashflow_fig = px.line(
+        cashflow_chart,
+        x="month_label",
+        y=["Cash Inflow", "Cash Outflow"],
+        markers=True,
+        title="Monthly Cash Inflow and Outflow",
+        labels={
+            "month_label": "Month",
+            "value": "Amount (₹)",
+            "variable": "Cash Flow Measure"
+        }
+    )
+    cashflow_fig.update_xaxes(type="category")
+    st.plotly_chart(cashflow_fig, use_container_width=True)
+
+    st.subheader("Net Cash Flow Trend")
+
+    net_chart = cashflow[
+        ["month_label", "net_cash_flow"]
+    ].rename(columns={
+        "net_cash_flow": "Net Cash Flow"
+    })
+
+    net_fig = px.bar(
+        net_chart,
+        x="month_label",
+        y="Net Cash Flow",
+        title="Monthly Net Cash Flow",
+        labels={
+            "month_label": "Month",
+            "Net Cash Flow": "Net Cash Flow (₹)"
+        }
+    )
+    net_fig.update_xaxes(type="category")
+    st.plotly_chart(net_fig, use_container_width=True)
+
+    display_cashflow = cashflow[
+        ["month_start_date", "cash_inflow", "cash_outflow", "net_cash_flow"]
+    ].copy()
+    display_cashflow["month_start_date"] = (
+        display_cashflow["month_start_date"].dt.strftime("%b %Y")
+    )
+
+    for column in ["cash_inflow", "cash_outflow", "net_cash_flow"]:
+        display_cashflow[column] = display_cashflow[column].map(
+            lambda value: f"₹{value:,.2f}"
+        )
+
+    st.dataframe(
+        display_cashflow.rename(columns={
+            "month_start_date": "Month",
+            "cash_inflow": "Cash Inflow",
+            "cash_outflow": "Cash Outflow",
+            "net_cash_flow": "Net Cash Flow"
+        }),
+        use_container_width=True,
+        hide_index=True
+    )
+
+    # --------------------------------------------------------
+    # 5. METHODOLOGY AND DATA QUALITY
+    # --------------------------------------------------------
+
+    st.subheader("Methodology & Data Quality")
+
+    st.write(
+        "- Receivables ageing combines overdue invoices into one "
+        "company-wide category to protect small groups."
+    )
+    st.write(
+        "- Invoice status is presented only as Paid or Open."
+    )
+    st.write(
+        "- Cash flow is aggregated by month; no client, invoice "
+        "or individual payment details are published."
+    )
+    st.warning(
+        "Data-quality note: the ageing total is ₹139,394,278, "
+        "while the DSO closing receivables total is ₹139,394,178, "
+        "a ₹100 difference. The invoice status summary also "
+        "contains a -₹100 residual in paid outstanding balances. "
+        "These figures are not represented as an exact "
+        "invoice-level reconciliation."
+    )
+
+    st.caption(
+        "Public dashboard uses aggregated datasets. "
+        "Individual client and invoice information is excluded."
+    )
+
+    st.stop()
 
 
 @st.cache_data(ttl=300)

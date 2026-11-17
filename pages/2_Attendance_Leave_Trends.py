@@ -1,4 +1,5 @@
 
+import os
 from pathlib import Path
 
 import duckdb
@@ -21,8 +22,342 @@ st.set_page_config(
 
 st.title("Attendance & Leave Trends")
 st.caption(
-    "Monthly workforce attendance, punctuality, overtime and approved leave"
+    "Monthly workforce attendance and punctuality trends"
 )
+
+
+
+# --------------------------------------------------
+# HOSTED ATTENDANCE MODE — AGGREGATE DATA ONLY
+# --------------------------------------------------
+
+HOSTED_DIR = Path(__file__).resolve().parents[1] / "data" / "hosted"
+HOSTED_MODE = (
+    os.getenv("PULSEIQ_HOSTED_MODE", "").lower() == "true"
+    or not DB.exists()
+)
+
+if HOSTED_MODE:
+    st.info(
+        "Public hosted mode: privacy-reviewed department-month "
+        "attendance aggregates."
+    )
+
+    hosted_file = HOSTED_DIR / "attendance_monthly.parquet"
+
+    if not hosted_file.exists():
+        st.error("Hosted attendance dataset is missing.")
+        st.stop()
+
+    try:
+        hosted = pd.read_parquet(hosted_file)
+    except Exception as exc:
+        st.error(f"Unable to load hosted attendance data: {exc}")
+        st.stop()
+
+    required = {
+        "month_start_date",
+        "department_name",
+        "attendance_rate_pct",
+        "late_arrivals_per_100_present_days",
+        "employee_count",
+    }
+
+    missing = required - set(hosted.columns)
+
+    if missing:
+        st.error(
+            "Unexpected hosted attendance schema: "
+            + ", ".join(sorted(missing))
+        )
+        st.stop()
+
+    hosted["month_start_date"] = pd.to_datetime(
+        hosted["month_start_date"], errors="coerce"
+    )
+
+    for column in [
+        "attendance_rate_pct",
+        "late_arrivals_per_100_present_days",
+        "employee_count",
+    ]:
+        hosted[column] = pd.to_numeric(
+            hosted[column], errors="coerce"
+        )
+
+    hosted = hosted.dropna(
+        subset=[
+            "month_start_date",
+            "department_name",
+            "attendance_rate_pct",
+            "late_arrivals_per_100_present_days",
+        ]
+    ).copy()
+
+    # Recheck publication threshold before displaying public data.
+    hosted = hosted[hosted["employee_count"] >= 10].copy()
+
+    if hosted.empty:
+        st.warning("No eligible hosted attendance aggregates are available.")
+        st.stop()
+
+    if hosted.duplicated(
+        ["month_start_date", "department_name"]
+    ).any():
+        st.error("Duplicate department-month records detected.")
+        st.stop()
+
+    with st.sidebar:
+        st.header("Filters")
+
+        departments = sorted(hosted["department_name"].unique())
+
+        selected_departments = st.multiselect(
+            "Department",
+            departments,
+            default=departments,
+        )
+
+        min_date = hosted["month_start_date"].min().date()
+        max_date = hosted["month_start_date"].max().date()
+
+        selected_dates = st.date_input(
+            "Date range",
+            value=(min_date, max_date),
+            min_value=min_date,
+            max_value=max_date,
+        )
+
+    filtered = hosted[
+        hosted["department_name"].isin(selected_departments)
+    ].copy()
+
+    if isinstance(selected_dates, (tuple, list)) and len(selected_dates) == 2:
+        start = pd.Timestamp(selected_dates[0]).to_period("M").to_timestamp()
+        end = pd.Timestamp(selected_dates[1]).to_period("M").to_timestamp()
+
+        filtered = filtered[
+            filtered["month_start_date"].between(start, end)
+        ]
+
+    if filtered.empty:
+        st.warning("No published attendance aggregates match these filters.")
+        st.stop()
+
+    st.caption(
+        "Privacy and coverage note: department-month groups with fewer "
+        "than 10 employees are excluded. Some months contain fewer "
+        "published departments than others. Results describe published "
+        "groups only, not necessarily the complete organisation."
+    )
+
+    # Equal-weighted average of published department rates.
+    monthly = (
+        filtered.groupby("month_start_date", as_index=False)
+        .agg(
+            average_department_attendance_pct=(
+                "attendance_rate_pct", "mean"
+            ),
+            average_late_arrivals_per_100_present_days=(
+                "late_arrivals_per_100_present_days", "mean"
+            ),
+            published_departments=("department_name", "nunique"),
+            published_department_months=("department_name", "size"),
+        )
+        .sort_values("month_start_date")
+    )
+
+    department_summary = (
+        filtered.groupby("department_name", as_index=False)
+        .agg(
+            average_attendance_pct=("attendance_rate_pct", "mean"),
+            average_late_arrivals_per_100_present_days=(
+                "late_arrivals_per_100_present_days", "mean"
+            ),
+            published_months=("month_start_date", "nunique"),
+        )
+        .sort_values("average_attendance_pct")
+    )
+
+    latest = monthly.iloc[-1]
+
+    st.header("Attendance overview")
+
+    k1, k2, k3, k4 = st.columns(4)
+
+    k1.metric(
+        "Latest average department attendance",
+        f"{latest['average_department_attendance_pct']:.2f}%",
+    )
+
+    k2.metric(
+        "Latest published departments",
+        f"{int(latest['published_departments'])}",
+    )
+
+    k3.metric(
+        "Average late arrivals per 100 present days",
+        f"{latest['average_late_arrivals_per_100_present_days']:.2f}",
+    )
+
+    k4.metric(
+        "Published department-month records",
+        f"{len(filtered):,}",
+    )
+
+    st.caption(
+        "Attendance KPIs are unweighted averages of published "
+        "department-level rates. They are not exact workforce-wide rates."
+    )
+
+    # 1. Monthly attendance trend
+    st.subheader("1. Monthly attendance trend")
+
+    fig = px.line(
+        monthly,
+        x="month_start_date",
+        y="average_department_attendance_pct",
+        markers=True,
+        labels={
+            "month_start_date": "Month",
+            "average_department_attendance_pct":
+                "Average published department attendance (%)",
+        },
+    )
+
+    fig.update_layout(
+        template="plotly_white",
+        yaxis_ticksuffix="%",
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
+
+    # 2. Attendance by department
+    st.subheader("2. Attendance by department")
+
+    fig_department = px.bar(
+        department_summary,
+        x="average_attendance_pct",
+        y="department_name",
+        orientation="h",
+        text="average_attendance_pct",
+        labels={
+            "average_attendance_pct": "Average attendance (%)",
+            "department_name": "Department",
+        },
+        hover_data={"published_months": True},
+    )
+
+    fig_department.update_traces(
+        texttemplate="%{text:.2f}%",
+        textposition="outside",
+        cliponaxis=False,
+    )
+
+    fig_department.update_layout(
+        template="plotly_white",
+        xaxis_ticksuffix="%",
+    )
+
+    st.plotly_chart(fig_department, use_container_width=True)
+
+    # 3. Late-arrival trend
+    st.subheader("3. Late arrivals by month")
+
+    fig_late = px.bar(
+        monthly,
+        x="month_start_date",
+        y="average_late_arrivals_per_100_present_days",
+        labels={
+            "month_start_date": "Month",
+            "average_late_arrivals_per_100_present_days":
+                "Average late arrivals per 100 present days",
+        },
+    )
+
+    fig_late.update_layout(template="plotly_white")
+
+    st.plotly_chart(fig_late, use_container_width=True)
+
+    # 4. Published aggregate detail
+    st.subheader("4. Published department attendance detail")
+
+    detail = filtered[
+        [
+            "month_start_date",
+            "department_name",
+            "attendance_rate_pct",
+            "late_arrivals_per_100_present_days",
+        ]
+    ].sort_values(
+        ["month_start_date", "department_name"]
+    ).rename(columns={
+        "month_start_date": "Month",
+        "department_name": "Department",
+        "attendance_rate_pct": "Attendance rate (%)",
+        "late_arrivals_per_100_present_days":
+            "Late arrivals per 100 present days",
+    })
+
+    st.dataframe(detail, use_container_width=True, hide_index=True)
+
+    st.download_button(
+        "Download published attendance aggregates (CSV)",
+        data=detail.to_csv(index=False).encode("utf-8"),
+        file_name="published_attendance_aggregates.csv",
+        mime="text/csv",
+    )
+
+    # 5. Numerical findings
+    st.subheader("5. Attendance findings")
+
+    lowest = monthly.loc[
+        monthly["average_department_attendance_pct"].idxmin()
+    ]
+    highest = monthly.loc[
+        monthly["average_department_attendance_pct"].idxmax()
+    ]
+
+    st.write(
+        f"**Lowest average published department attendance:** "
+        f"{lowest['month_start_date']:%B %Y} — "
+        f"{lowest['average_department_attendance_pct']:.2f}%."
+    )
+
+    st.write(
+        f"**Highest average published department attendance:** "
+        f"{highest['month_start_date']:%B %Y} — "
+        f"{highest['average_department_attendance_pct']:.2f}%."
+    )
+
+    if len(monthly) >= 2:
+        monthly["change_pp"] = (
+            monthly["average_department_attendance_pct"].diff()
+        )
+
+        declines = monthly.dropna(subset=["change_pp"])
+        declines = declines[declines["change_pp"] < 0]
+
+        if not declines.empty:
+            largest = declines.loc[declines["change_pp"].idxmin()]
+
+            st.write(
+                f"**Largest month-to-month decline:** "
+                f"{largest['month_start_date']:%B %Y} — "
+                f"{largest['change_pp']:.2f} percentage points."
+            )
+        else:
+            st.info(
+                "No month-to-month decline was found in the selected range."
+            )
+
+    st.info(
+        "These findings describe published department aggregates. "
+        "They do not establish the cause of attendance changes."
+    )
+
+    st.success("Hosted Attendance Dashboard loaded successfully.")
+    st.stop()
 
 
 # --------------------------------------------------

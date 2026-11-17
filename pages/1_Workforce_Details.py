@@ -1,15 +1,33 @@
 from pathlib import Path
+import os
+
 import duckdb
+import pandas as pd
 import plotly.express as px
 import streamlit as st
 
-DB = Path(__file__).resolve().parents[1] / "05_Starter" / "pulseiq.duckdb"
+ROOT = Path(__file__).resolve().parents[1]
+DB = ROOT / "05_Starter" / "pulseiq.duckdb"
+HOSTED_DIR = ROOT / "data" / "hosted"
+HOSTED_MODE = (os.getenv("PULSEIQ_HOSTED_MODE", "").lower() == "true" or not DB.exists())
 
 st.title("Workforce Details")
-st.caption("Current workforce snapshot · Governed metric views")
+st.caption("Current workforce snapshot · Governed aggregate metrics")
+
 
 @st.cache_data
 def load_details():
+    if HOSTED_MODE:
+        location = pd.read_parquet(
+            HOSTED_DIR / "location_distribution.parquet"
+        ).sort_values("tier_number")
+
+        work_mode = pd.read_parquet(
+            HOSTED_DIR / "work_mode_distribution.parquet"
+        ).sort_values("headcount", ascending=False)
+
+        return location, work_mode
+
     con = duckdb.connect(str(DB), read_only=True)
     try:
         location = con.execute("""
@@ -17,29 +35,39 @@ def load_details():
             FROM metrics.m30_location_tier_headcount
             ORDER BY tier_number
         """).fetchdf()
+
         work_mode = con.execute("""
             SELECT work_mode, headcount
             FROM metrics.m31_work_mode_headcount
             ORDER BY headcount DESC
         """).fetchdf()
+
         return location, work_mode
     finally:
         con.close()
 
+
 try:
     location, work_mode = load_details()
 except Exception as exc:
-    st.error(f"Could not load governed metric views: {exc}")
+    st.error(f"Could not load workforce details: {exc}")
     st.stop()
+
 
 left, right = st.columns(2)
 
 with left:
     st.subheader("Employees by City Tier")
+
     fig = px.bar(
-        location, x="city_tier", y="headcount",
-        labels={"city_tier": "City tier", "headcount": "Employees"},
-        color_discrete_sequence=["#247BA0"]
+        location,
+        x="city_tier",
+        y="headcount",
+        labels={
+            "city_tier": "City tier",
+            "headcount": "Employees",
+        },
+        color_discrete_sequence=["#247BA0"],
     )
     fig.update_layout(template="plotly_white")
     st.plotly_chart(fig, use_container_width=True)
@@ -48,18 +76,26 @@ with left:
         top = location.loc[location["headcount"].idxmax()]
         total = int(location["headcount"].sum())
         share = int(top["headcount"]) / total * 100 if total else 0
+
         st.caption(
             f"Insight: {top['city_tier']} has the most employees "
             f"({int(top['headcount']):,}), representing {share:.1f}% "
             "of employees across displayed tiers."
         )
 
+
 with right:
     st.subheader("Employees by Work Mode")
+
     fig = px.bar(
-        work_mode, x="work_mode", y="headcount",
-        labels={"work_mode": "Work mode", "headcount": "Employees"},
-        color_discrete_sequence=["#2A9D8F"]
+        work_mode,
+        x="work_mode",
+        y="headcount",
+        labels={
+            "work_mode": "Work mode",
+            "headcount": "Employees",
+        },
+        color_discrete_sequence=["#2A9D8F"],
     )
     fig.update_layout(template="plotly_white")
     st.plotly_chart(fig, use_container_width=True)
@@ -68,13 +104,22 @@ with right:
         top = work_mode.loc[work_mode["headcount"].idxmax()]
         total = int(work_mode["headcount"].sum())
         share = int(top["headcount"]) / total * 100 if total else 0
+
         st.caption(
             f"Insight: {top['work_mode']} is the largest work mode "
             f"({int(top['headcount']):,} employees; {share:.1f}% "
             "of employees across displayed modes)."
         )
 
-st.info(
-    "These charts show current workforce snapshots, not historical monthly "
-    "trends. Small groups may be suppressed by the governed metric layer."
-)
+
+if HOSTED_MODE:
+    st.info(
+        "Public edition: These charts use reviewed aggregate workforce "
+        "snapshots. No employee-level records are published."
+    )
+else:
+    st.info(
+        "These charts show current workforce snapshots, not historical "
+        "monthly trends. Small groups may be suppressed by the governed "
+        "metric layer."
+    )

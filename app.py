@@ -6,6 +6,8 @@ import plotly.express as px
 import streamlit as st
 
 DB = Path(__file__).parent / "05_Starter" / "pulseiq.duckdb"
+HOSTED_DIR = Path(__file__).parent / "data" / "hosted"
+HOSTED_MODE = not DB.exists()
 st.set_page_config(page_title="PulseIQ Workforce", page_icon="📊", layout="wide")
 
 st.title("PulseIQ | Workforce Overview")
@@ -13,6 +15,21 @@ st.caption("Governed workforce metrics · Monthly headcount and current workforc
 
 @st.cache_data
 def load_data():
+    if HOSTED_MODE:
+        headcount = pd.read_parquet(
+            HOSTED_DIR / "workforce_monthly.parquet"
+        )
+        movements = pd.read_parquet(
+            HOSTED_DIR / "workforce_movements.parquet"
+        )
+        hires = movements[
+            ["month_start_date", "department_id", "hires"]
+        ].copy()
+        exits = movements[
+            ["month_start_date", "department_id", "exits"]
+        ].copy()
+        return headcount, hires, exits
+
     con = duckdb.connect(str(DB), read_only=True)
     try:
         headcount = con.execute("""
@@ -82,8 +99,21 @@ if isinstance(dates, (tuple, list)) and len(dates) == 2:
 a, b, c, d = st.columns(4)
 a.metric("Latest headcount", f"{latest:,}", latest_month.strftime("%b %Y"))
 b.metric("Net change", f"{change:+,}", f"{change_pct:+.1f}%")
-c.metric("Hires in period", f"{int(h['hires'].sum()):,}")
-d.metric("Exits in period", f"{int(e['exits'].sum()):,}")
+c.metric(
+    "Hires in eligible groups" if HOSTED_MODE else "Hires in period",
+    f"{int(h['hires'].sum()):,}"
+)
+d.metric(
+    "Exits in eligible groups" if HOSTED_MODE else "Exits in period",
+    f"{int(e['exits'].sum()):,}"
+)
+
+if HOSTED_MODE:
+    st.caption(
+        "Hosted data privacy note: movement totals include only department-month "
+        "groups where both hire and exit counts are zero or at least 10. "
+        "Suppressed groups are excluded, not treated as zero."
+    )
 
 st.subheader("Headcount trend")
 fig = px.line(monthly, x="month_start_date", y="headcount", markers=True,
@@ -116,16 +146,21 @@ if not dept.empty:
 
 st.subheader("Department Headcount Share (%)")
 
-share = duckdb.connect(str(DB), read_only=True)
-try:
-    share_df = share.execute("""
-        SELECT department_name, department_headcount,
-               total_headcount, headcount_share_pct
-        FROM metrics.m32_department_headcount_share
-        ORDER BY department_headcount DESC
-    """).fetchdf()
-finally:
-    share.close()
+if HOSTED_MODE:
+    share_df = pd.read_parquet(
+        HOSTED_DIR / "department_distribution.parquet"
+    )
+else:
+    share = duckdb.connect(str(DB), read_only=True)
+    try:
+        share_df = share.execute("""
+            SELECT department_name, department_headcount,
+                   total_headcount, headcount_share_pct
+            FROM metrics.m32_department_headcount_share
+            ORDER BY department_headcount DESC
+        """).fetchdf()
+    finally:
+        share.close()
 
 if not share_df.empty:
     share_fig = px.bar(

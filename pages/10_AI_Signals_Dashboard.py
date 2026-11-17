@@ -1,5 +1,6 @@
 
 from pathlib import Path
+import os
 
 import duckdb
 import pandas as pd
@@ -35,6 +36,401 @@ st.warning(
     "for human review. They are not confirmed fraud, misconduct, or "
     "guaranteed future outcomes."
 )
+
+
+
+# =========================================================
+# HOSTED PAGE 10 - PUBLIC AGGREGATED DASHBOARD
+# =========================================================
+
+HOSTED_MODE = (
+    os.getenv("PULSEIQ_HOSTED_MODE", "").lower() == "true"
+    or not DB_PATH.exists()
+)
+
+if HOSTED_MODE:
+    HOSTED_DATA = BASE_DIR / "data" / "hosted"
+
+    @st.cache_data(ttl=300)
+    def load_hosted_ai_data():
+        anomaly_summary = pd.read_parquet(
+            HOSTED_DATA / "anomaly_summary.parquet"
+        )
+        forecasts = pd.read_parquet(
+            HOSTED_DATA / "forecast_company.parquet"
+        )
+        risk_summary = pd.read_parquet(
+            HOSTED_DATA / "attrition_risk_summary.parquet"
+        )
+        actuals = pd.read_parquet(
+            HOSTED_DATA / "ai_actuals_monthly.parquet"
+        )
+        return anomaly_summary, forecasts, risk_summary, actuals
+
+    try:
+        anomaly_summary, forecasts, risk_summary, actuals = (
+            load_hosted_ai_data()
+        )
+    except Exception as exc:
+        st.error(f"Unable to load hosted AI dashboard data: {exc}")
+        st.info("Check the curated Parquet files in data/hosted/.")
+        st.stop()
+
+    actuals["month_start_date"] = pd.to_datetime(
+        actuals["month_start_date"]
+    )
+    forecasts["forecast_month"] = pd.to_datetime(
+        forecasts["forecast_month"]
+    )
+    risk_summary["as_of_date"] = pd.to_datetime(
+        risk_summary["as_of_date"]
+    )
+
+    cutoff = (
+        actuals["month_start_date"].max()
+        + pd.offsets.MonthEnd(0)
+    ).strftime("%d %B %Y")
+    st.info(f"Company-wide data cut-off: {cutoff}")
+
+    # -----------------------------------------------------
+    # 1. AI SIGNALS OVERVIEW
+    # -----------------------------------------------------
+
+    st.subheader("AI Signals Overview")
+
+    total_flagged = int(anomaly_summary["flagged_count"].sum())
+
+    known_exposure = anomaly_summary["total_exposure"].sum(
+        min_count=1
+    )
+
+    high_risk_count = int(
+        risk_summary.loc[
+            risk_summary["risk_band"] == "High",
+            "prediction_count"
+        ].sum()
+    )
+
+    c1, c2, c3, c4 = st.columns(4)
+
+    c1.metric("Flagged Anomalies", f"{total_flagged:,}")
+
+    if pd.notna(known_exposure):
+        c2.metric(
+            "Known Money at Risk",
+            f"₹{known_exposure / 10000000:.2f} Cr"
+        )
+    else:
+        c2.metric("Known Money at Risk", "Unavailable")
+
+    c3.metric(
+        "High Attrition Risk Signals",
+        f"{high_risk_count:,}"
+    )
+    c4.metric("Forecast Records", f"{len(forecasts):,}")
+
+    st.caption(
+        "Anomaly exposure is shown only for categories that meet "
+        "the publication threshold. Suppressed categories are excluded "
+        "from exposure totals; unknown exposure is not treated as zero."
+    )
+
+    # -----------------------------------------------------
+    # 2. ANOMALY SUMMARY
+    # -----------------------------------------------------
+
+    st.divider()
+    st.subheader("1. AI Anomaly Financial Risk Summary")
+
+    anomaly_display = anomaly_summary.copy()
+
+    fig = px.bar(
+        anomaly_display.sort_values("flagged_count", ascending=True),
+        x="flagged_count",
+        y="anomaly_category",
+        orientation="h",
+        labels={
+            "flagged_count": "Flagged records",
+            "anomaly_category": "Anomaly category",
+        },
+        title="Aggregated Flagged Anomalies by Category",
+    )
+    fig.update_layout(template="plotly_white", height=420)
+    st.plotly_chart(fig, use_container_width=True)
+
+    st.markdown("**Category-level financial exposure**")
+
+    exposure_display = anomaly_display[
+        anomaly_display["total_exposure"].notna()
+    ].copy()
+
+    if not exposure_display.empty:
+        fig = px.bar(
+            exposure_display.sort_values(
+                "total_exposure", ascending=True
+            ),
+            x="total_exposure",
+            y="anomaly_category",
+            orientation="h",
+            labels={
+                "total_exposure": "Known aggregate exposure (₹)",
+                "anomaly_category": "Anomaly category",
+            },
+            title="Known Aggregate Financial Exposure",
+        )
+        fig.update_layout(template="plotly_white", height=380)
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.info("No publishable aggregate exposure values are available.")
+
+    st.dataframe(
+        anomaly_display.rename(columns={
+            "anomaly_category": "Anomaly Category",
+            "flagged_count": "Flagged Records",
+            "exposure_record_count": "Records with Exposure",
+            "total_exposure": "Known Exposure (₹)",
+            "average_anomaly_score": "Average Anomaly Score",
+        }).round(2),
+        use_container_width=True,
+        hide_index=True,
+    )
+
+    st.caption(
+        "Small anomaly categories are combined. Their financial "
+        "exposure and anomaly scores are intentionally suppressed."
+    )
+
+    # -----------------------------------------------------
+    # 3. FORECAST VS ACTUAL
+    # -----------------------------------------------------
+
+    st.divider()
+    st.subheader("2. Company-wide Forecast vs Actual")
+
+    metric_labels = {
+        "headcount_end": "Headcount",
+        "attrition_rate_monthly_pct": "Monthly Attrition Rate (%)",
+    }
+
+    selected_metric = st.selectbox(
+        "Select forecast metric",
+        options=list(metric_labels.keys()),
+        format_func=lambda value: metric_labels[value],
+    )
+
+    selected_forecast = forecasts[
+        forecasts["metric"] == selected_metric
+    ].copy()
+
+    actual_column = (
+        "actual_headcount"
+        if selected_metric == "headcount_end"
+        else "actual_attrition_rate_pct"
+    )
+
+    actual = actuals[
+        ["month_start_date", actual_column]
+    ].rename(columns={
+        "month_start_date": "month",
+        actual_column: "actual_value",
+    }).copy()
+
+    predicted = selected_forecast[
+        [
+            "forecast_month",
+            "forecast_value",
+            "lower_80",
+            "upper_80",
+        ]
+    ].rename(columns={
+        "forecast_month": "month",
+    }).copy()
+
+    fig = go.Figure()
+
+    fig.add_trace(go.Scatter(
+        x=actual["month"],
+        y=actual["actual_value"],
+        mode="lines+markers",
+        name="Actual",
+    ))
+
+    fig.add_trace(go.Scatter(
+        x=predicted["month"],
+        y=predicted["forecast_value"],
+        mode="lines+markers",
+        name="Forecast",
+    ))
+
+    fig.add_trace(go.Scatter(
+        x=pd.concat([
+            predicted["month"],
+            predicted["month"][::-1],
+        ]),
+        y=pd.concat([
+            predicted["upper_80"],
+            predicted["lower_80"][::-1],
+        ]),
+        fill="toself",
+        fillcolor="rgba(100, 149, 237, 0.16)",
+        line=dict(color="rgba(255,255,255,0)"),
+        name="80% Prediction Interval",
+        hoverinfo="skip",
+    ))
+
+    fig.update_layout(
+        template="plotly_white",
+        height=430,
+        title=f"Actual and Forecast: {metric_labels[selected_metric]}",
+        xaxis_title="Month",
+        yaxis_title=metric_labels[selected_metric],
+        hovermode="x unified",
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+    forecast_meta = selected_forecast.iloc[0]
+
+    st.caption(
+        f"Model: {forecast_meta['model_version']} | "
+        f"Method: {forecast_meta['method']} | "
+        f"Trained through: {forecast_meta['trained_through']}"
+    )
+
+    forecast_table = selected_forecast.copy()
+    forecast_table["forecast_month"] = (
+        forecast_table["forecast_month"].dt.strftime("%b %Y")
+    )
+
+    st.markdown("**Forecast values and 80% prediction intervals**")
+    st.dataframe(
+        forecast_table[
+            [
+                "forecast_month",
+                "forecast_value",
+                "lower_80",
+                "upper_80",
+            ]
+        ].rename(columns={
+            "forecast_month": "Month",
+            "forecast_value": "Forecast",
+            "lower_80": "Lower 80%",
+            "upper_80": "Upper 80%",
+        }).round(2),
+        use_container_width=True,
+        hide_index=True,
+    )
+
+    comparison = predicted.merge(actual, on="month", how="inner")
+
+    st.markdown("**Forecast error analysis**")
+
+    if not comparison.empty:
+        comparison["error"] = (
+            comparison["actual_value"] - comparison["forecast_value"]
+        )
+        comparison["absolute_error"] = comparison["error"].abs()
+        comparison["month"] = comparison["month"].dt.strftime("%b %Y")
+
+        st.dataframe(
+            comparison[
+                [
+                    "month",
+                    "actual_value",
+                    "forecast_value",
+                    "error",
+                    "absolute_error",
+                ]
+            ].rename(columns={
+                "month": "Month",
+                "actual_value": "Actual",
+                "forecast_value": "Forecast",
+                "error": "Error (Actual - Forecast)",
+                "absolute_error": "Absolute Error",
+            }).round(2),
+            use_container_width=True,
+            hide_index=True,
+        )
+    else:
+        st.info(
+            "No forecast months have actual values available yet. "
+            "Forecast error analysis will become available when actual "
+            "results for these forecast months are recorded."
+        )
+
+    # -----------------------------------------------------
+    # 4. AGGREGATED ATTRITION RISK
+    # -----------------------------------------------------
+
+    st.divider()
+    st.subheader("3. Company-wide AI Attrition Risk Signals")
+
+    risk_date = risk_summary["as_of_date"].max()
+    risk_display = risk_summary[
+        risk_summary["as_of_date"] == risk_date
+    ].copy()
+
+    fig = px.bar(
+        risk_display,
+        x="risk_band",
+        y="prediction_count",
+        color="risk_band",
+        category_orders={
+            "risk_band": ["Low", "Medium", "High"]
+        },
+        labels={
+            "risk_band": "AI risk band",
+            "prediction_count": "Aggregated predictions",
+        },
+        title="Company-wide Attrition Risk Distribution",
+    )
+    fig.update_layout(template="plotly_white", height=400)
+    st.plotly_chart(fig, use_container_width=True)
+
+    st.dataframe(
+        risk_display[
+            ["risk_band", "prediction_count"]
+        ].rename(columns={
+            "risk_band": "Risk Band",
+            "prediction_count": "Aggregated Predictions",
+        }),
+        use_container_width=True,
+        hide_index=True,
+    )
+
+    st.caption(
+        "Company-wide aggregate only. Individual employees, "
+        "departments, risk scores and prediction reasons are not published."
+    )
+
+    # -----------------------------------------------------
+    # 5. AI TRANSPARENCY
+    # -----------------------------------------------------
+
+    st.divider()
+    st.subheader("4. AI Transparency and Human Review")
+
+    st.markdown("""
+    - **Anomaly detection:** Highlights unusual patterns in the validated demo data.
+    - **Financial exposure:** Shows known aggregate estimates only for publishable categories.
+    - **Forecasting:** Displays company-wide predictions and supplied 80% prediction intervals.
+    - **Forecast errors:** Calculated only when actual values exist for forecast months.
+    - **Attrition prediction:** Published as company-wide risk-band counts only.
+    - **Privacy:** Individual employee and department-level AI risk predictions are excluded.
+    - **Human review:** Every signal requires verification before action.
+    """)
+
+    st.warning(
+        "Model outputs can contain false positives, false negatives and "
+        "uncertainty. Do not use anomaly scores or attrition predictions "
+        "alone to make employment, payroll or disciplinary decisions."
+    )
+
+    st.caption(
+        "Source: privacy-reviewed aggregate Parquet datasets in data/hosted/. "
+        "Forecast actuals are company-wide monthly aggregates."
+    )
+
+    st.stop()
 
 
 # ---------------------------------------------------------

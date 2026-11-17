@@ -17,7 +17,6 @@ logs/
 05_Starter/pulseiq.duckdb
 
 # Local database and source data
-05_Starter/pulseiq.duckdb
 03_Data/
 05_Starter/demo_users.csv
 
@@ -37,3 +36,6 @@ data/dim_sprint_source.csv
 
 # Generated monthly PDF reports
 /reports/
+docs/evidence/anomaly_employee_key_unmatched.csv
+.streamlit/secrets.toml
+secrets.toml

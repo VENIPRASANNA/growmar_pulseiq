@@ -1,0 +1,243 @@
+{
+  "project": "PulseIQ",
+  "exported_at_utc": "2026-11-17T14:02:40.163979+00:00",
+  "minimum_group_size": 10,
+  "database": "Local DuckDB warehouse",
+  "format": "Parquet",
+  "datasets": [
+    {
+      "dataset": "workforce_monthly",
+      "rows": 651,
+      "columns": [
+        "month_start_date",
+        "department_id",
+        "department_name",
+        "headcount",
+        "group_size"
+      ],
+      "size_bytes": 4077
+    },
+    {
+      "dataset": "workforce_movements_quarterly",
+      "rows": 6,
+      "columns": [
+        "quarter",
+        "hires",
+        "exits",
+        "net_movement"
+      ],
+      "size_bytes": 1718
+    },
+    {
+      "dataset": "attrition_rolling_12m",
+      "rows": 6,
+      "columns": [
+        "month_start_date",
+        "attrition_rate_12m_pct",
+        "voluntary_attrition_rate_12m_pct"
+      ],
+      "size_bytes": 1362
+    },
+    {
+      "dataset": "payroll_monthly",
+      "rows": 170,
+      "columns": [
+        "month_start_date",
+        "department_id",
+        "department_name",
+        "gross_pay",
+        "net_pay",
+        "employer_cost",
+        "cost_per_head",
+        "overtime_share_pct",
+        "variable_pay_share_pct",
+        "employee_count"
+      ],
+      "size_bytes": 10029
+    },
+    {
+      "dataset": "payroll_company_monthly",
+      "rows": 18,
+      "columns": [
+        "month_start_date",
+        "gross_pay",
+        "net_pay",
+        "employer_cost",
+        "employee_count"
+      ],
+      "size_bytes": 2364
+    },
+    {
+      "dataset": "attendance_monthly",
+      "rows": 170,
+      "columns": [
+        "month_start_date",
+        "department_id",
+        "department_name",
+        "attendance_rate_pct",
+        "late_arrivals_per_100_present_days",
+        "employee_count"
+      ],
+      "size_bytes": 4181
+    },
+    {
+      "dataset": "productivity_sprint",
+      "rows": 605,
+      "columns": [
+        "team_id",
+        "team_name",
+        "sprint_id",
+        "sprint_name",
+        "start_date",
+        "end_date",
+        "completed_tasks",
+        "eligible_tasks",
+        "task_completion_rate_pct",
+        "completed_on_time_tasks",
+        "on_time_delivery_rate_pct",
+        "completed_story_points",
+        "average_cycle_time_days",
+        "group_size"
+      ],
+      "size_bytes": 15517
+    },
+    {
+      "dataset": "finance_monthly",
+      "rows": 18,
+      "columns": [
+        "month_start_date",
+        "revenue",
+        "net_profit",
+        "operating_margin_pct",
+        "payroll_cost_ledger",
+        "payroll_pct_revenue"
+      ],
+      "size_bytes": 2927
+    },
+    {
+      "dataset": "receivables_summary",
+      "rows": 1,
+      "columns": [
+        "report_date",
+        "closing_receivables",
+        "credit_sales_90d",
+        "dso_days"
+      ],
+      "size_bytes": 1655
+    },
+    {
+      "dataset": "receivables_ageing",
+      "rows": 2,
+      "columns": [
+        "ageing_category",
+        "invoice_count",
+        "outstanding_amount"
+      ],
+      "size_bytes": 1303
+    },
+    {
+      "dataset": "invoice_status_summary",
+      "rows": 2,
+      "columns": [
+        "invoice_category",
+        "invoice_count",
+        "invoice_value",
+        "total_paid",
+        "outstanding_amount"
+      ],
+      "size_bytes": 2097
+    },
+    {
+      "dataset": "cashflow_monthly",
+      "rows": 18,
+      "columns": [
+        "month_start_date",
+        "cash_inflow",
+        "cash_outflow",
+        "net_cash_flow"
+      ],
+      "size_bytes": 2001
+    },
+    {
+      "dataset": "department_distribution",
+      "rows": 10,
+      "columns": [
+        "department_id",
+        "department_name",
+        "department_headcount",
+        "total_headcount",
+        "headcount_share_pct"
+      ],
+      "size_bytes": 2260
+    },
+    {
+      "dataset": "location_distribution",
+      "rows": 3,
+      "columns": [
+        "city_tier",
+        "tier_number",
+        "headcount"
+      ],
+      "size_bytes": 1166
+    },
+    {
+      "dataset": "work_mode_distribution",
+      "rows": 3,
+      "columns": [
+        "work_mode",
+        "headcount"
+      ],
+      "size_bytes": 835
+    },
+    {
+      "dataset": "anomaly_summary",
+      "rows": 6,
+      "columns": [
+        "anomaly_category",
+        "flagged_count",
+        "exposure_record_count",
+        "total_exposure",
+        "average_anomaly_score"
+      ],
+      "size_bytes": 2083
+    },
+    {
+      "dataset": "forecast_company",
+      "rows": 12,
+      "columns": [
+        "metric",
+        "forecast_month",
+        "forecast_value",
+        "lower_80",
+        "upper_80",
+        "method",
+        "trained_through",
+        "model_version"
+      ],
+      "size_bytes": 3251
+    },
+    {
+      "dataset": "attrition_risk_summary",
+      "rows": 3,
+      "columns": [
+        "as_of_date",
+        "risk_band",
+        "prediction_count"
+      ],
+      "size_bytes": 1142
+    },
+    {
+      "dataset": "ai_actuals_monthly",
+      "rows": 81,
+      "columns": [
+        "month_start_date",
+        "actual_headcount",
+        "actual_attrition_rate_pct"
+      ],
+      "size_bytes": 2292
+    }
+  ],
+  "total_datasets": 19,
+  "total_rows": 1785,
+  "total_size_bytes": 62260
+}

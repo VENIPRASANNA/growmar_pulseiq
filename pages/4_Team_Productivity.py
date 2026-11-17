@@ -1,5 +1,6 @@
 
 import duckdb
+from pathlib import Path
 import pandas as pd
 import plotly.express as px
 import streamlit as st
@@ -26,6 +27,347 @@ st.write(
     "Compare team delivery across sprints, investigate workflow issues, "
     "and verify metrics against the underlying task records."
 )
+
+
+# =========================================================
+# HOSTED MODE — AGGREGATE DATA ONLY
+# =========================================================
+
+HOSTED_DIR = Path(__file__).resolve().parents[1] / "data" / "hosted"
+HOSTED_MODE = not Path(DB_PATH).exists()
+
+if HOSTED_MODE:
+    st.info("Public hosted mode: privacy-reviewed team and sprint aggregates.")
+
+    hosted_file = HOSTED_DIR / "productivity_sprint.parquet"
+
+    if not hosted_file.exists():
+        st.error("Hosted productivity dataset is missing.")
+        st.stop()
+
+    try:
+        hosted_df = pd.read_parquet(hosted_file)
+    except Exception as exc:
+        st.error(f"Unable to load hosted productivity data: {exc}")
+        st.stop()
+
+    required_columns = {
+        "team_name", "sprint_name", "start_date", "end_date",
+        "completed_tasks", "eligible_tasks",
+        "task_completion_rate_pct", "completed_on_time_tasks",
+        "on_time_delivery_rate_pct", "completed_story_points",
+        "average_cycle_time_days",
+    }
+
+    missing_columns = required_columns - set(hosted_df.columns)
+
+    if missing_columns:
+        st.error(
+            "Hosted productivity dataset has an unexpected schema: "
+            + ", ".join(sorted(missing_columns))
+        )
+        st.stop()
+
+    for column in ["start_date", "end_date"]:
+        hosted_df[column] = pd.to_datetime(
+            hosted_df[column], errors="coerce"
+        )
+
+    for column in [
+        "completed_tasks", "eligible_tasks",
+        "completed_on_time_tasks", "completed_story_points",
+        "task_completion_rate_pct", "on_time_delivery_rate_pct",
+        "average_cycle_time_days",
+    ]:
+        hosted_df[column] = pd.to_numeric(
+            hosted_df[column], errors="coerce"
+        )
+
+    hosted_df = hosted_df.dropna(
+        subset=["team_name", "sprint_name"]
+    ).copy()
+
+    if hosted_df.empty:
+        st.warning("No eligible hosted productivity aggregates are available.")
+        st.stop()
+
+    st.sidebar.header("Dashboard filters")
+
+    available_teams = sorted(hosted_df["team_name"].unique().tolist())
+
+    selected_teams = st.sidebar.multiselect(
+        "Teams",
+        options=available_teams,
+        default=available_teams,
+    )
+
+    available_sprints = (
+        hosted_df[["sprint_name", "start_date"]]
+        .drop_duplicates()
+        .sort_values(["start_date", "sprint_name"])
+    )
+
+    sprint_options = ["All sprints"] + available_sprints[
+        "sprint_name"
+    ].drop_duplicates().tolist()
+
+    selected_sprint = st.sidebar.selectbox(
+        "Sprint",
+        sprint_options,
+    )
+
+    filtered = hosted_df[
+        hosted_df["team_name"].isin(selected_teams)
+    ].copy()
+
+    if selected_sprint != "All sprints":
+        filtered = filtered[
+            filtered["sprint_name"] == selected_sprint
+        ]
+
+    if filtered.empty:
+        st.warning("No published aggregates match these filters.")
+        st.stop()
+
+    # Suppressed team-sprint groups are absent, not zero.
+    st.caption(
+        "Privacy note: only eligible team-sprint groups are shown. "
+        "Groups below the minimum publication threshold, and groups "
+        "with suppressed small counts, are excluded. Totals and charts "
+        "therefore represent published groups, not necessarily the "
+        "complete organisation."
+    )
+
+    def hosted_team_summary(data):
+        summary = (
+            data.groupby("team_name", as_index=False)
+            .agg(
+                completed_tasks=("completed_tasks", "sum"),
+                eligible_tasks=("eligible_tasks", "sum"),
+                completed_on_time_tasks=("completed_on_time_tasks", "sum"),
+                velocity_points=("completed_story_points", "sum"),
+                mean_sprint_cycle_days=("average_cycle_time_days", "mean"),
+            )
+        )
+
+        summary["completion_rate_pct"] = (
+            100 * summary["completed_tasks"]
+            / summary["eligible_tasks"].replace(0, pd.NA)
+        )
+
+        summary["on_time_rate_pct"] = (
+            100 * summary["completed_on_time_tasks"]
+            / summary["completed_tasks"].replace(0, pd.NA)
+        )
+
+        return summary
+
+    team_summary = hosted_team_summary(filtered)
+
+    total_completed = int(filtered["completed_tasks"].sum())
+    total_eligible = int(filtered["eligible_tasks"].sum())
+    total_on_time = int(filtered["completed_on_time_tasks"].sum())
+    total_points = filtered["completed_story_points"].sum()
+
+    overall_completion = (
+        100 * total_completed / total_eligible
+        if total_eligible else None
+    )
+    overall_on_time = (
+        100 * total_on_time / total_completed
+        if total_completed else None
+    )
+
+    st.header("Productivity overview")
+
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("Completed tasks", f"{total_completed:,}")
+    k2.metric(
+        "Completion rate",
+        f"{overall_completion:.2f}%" if overall_completion is not None else "N/A",
+    )
+    k3.metric("Completed story points", f"{total_points:,.0f}")
+    k4.metric(
+        "On-time delivery",
+        f"{overall_on_time:.2f}%" if overall_on_time is not None else "N/A",
+    )
+
+    st.caption(
+        f"{len(filtered):,} published team-sprint records · "
+        f"{filtered['team_name'].nunique()} teams · "
+        f"{filtered['sprint_name'].nunique()} sprints"
+    )
+
+    # Team comparison
+    st.header("1. Team comparison")
+
+    metric_options = {
+        "Completed story points": "velocity_points",
+        "Task completion rate (%)": "completion_rate_pct",
+        "On-time delivery rate (%)": "on_time_rate_pct",
+        "Average of sprint cycle-time averages (days)": "mean_sprint_cycle_days",
+    }
+
+    metric_choice = st.selectbox(
+        "Choose a team comparison metric",
+        list(metric_options),
+    )
+
+    metric_column = metric_options[metric_choice]
+
+    chart_df = team_summary.dropna(subset=[metric_column])
+
+    if not chart_df.empty:
+        fig = px.bar(
+            chart_df,
+            x="team_name",
+            y=metric_column,
+            title=metric_choice,
+            labels={
+                "team_name": "Team",
+                metric_column: metric_choice,
+            },
+        )
+        fig.update_layout(height=450, xaxis_tickangle=-35)
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.info("No eligible data is available for this comparison.")
+
+    # Sprint trends
+    st.header("2. Sprint-by-sprint trends")
+
+    trend_options = {
+        "Completed story points": "completed_story_points",
+        "Task completion rate (%)": "task_completion_rate_pct",
+        "On-time delivery rate (%)": "on_time_delivery_rate_pct",
+        "Average cycle time (days)": "average_cycle_time_days",
+    }
+
+    trend_choice = st.selectbox(
+        "Choose a trend metric",
+        list(trend_options),
+        key="hosted_trend_metric",
+    )
+
+    trend_column = trend_options[trend_choice]
+
+    trend_df = filtered.dropna(subset=[trend_column]).copy()
+
+    if not trend_df.empty:
+        trend_df["sprint_label"] = (
+            trend_df["sprint_name"].astype(str)
+            + " ("
+            + trend_df["start_date"].dt.strftime("%Y-%m-%d").fillna("date unavailable")
+            + ")"
+        )
+
+        fig = px.line(
+            trend_df.sort_values("start_date"),
+            x="sprint_label",
+            y=trend_column,
+            color="team_name",
+            markers=True,
+            title=f"{trend_choice} by sprint",
+            labels={
+                "sprint_label": "Sprint",
+                trend_column: trend_choice,
+                "team_name": "Team",
+            },
+        )
+        fig.update_layout(height=480, xaxis_tickangle=-35)
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.info("No data is available for this trend.")
+
+    # Aggregate detail
+    st.header("3. Published team and sprint detail")
+
+    detail_columns = [
+        "team_name",
+        "sprint_name",
+        "start_date",
+        "end_date",
+        "completed_tasks",
+        "eligible_tasks",
+        "task_completion_rate_pct",
+        "completed_on_time_tasks",
+        "on_time_delivery_rate_pct",
+        "completed_story_points",
+        "average_cycle_time_days",
+    ]
+
+    detail = filtered[detail_columns].copy()
+
+    detail = detail.rename(columns={
+        "team_name": "Team",
+        "sprint_name": "Sprint",
+        "start_date": "Sprint start",
+        "end_date": "Sprint end",
+        "completed_tasks": "Completed tasks",
+        "eligible_tasks": "Eligible tasks",
+        "task_completion_rate_pct": "Completion rate %",
+        "completed_on_time_tasks": "On-time completed tasks",
+        "on_time_delivery_rate_pct": "On-time delivery %",
+        "completed_story_points": "Completed story points",
+        "average_cycle_time_days": "Average cycle time days",
+    })
+
+    st.dataframe(detail, use_container_width=True, hide_index=True)
+
+    st.download_button(
+        "Download published productivity aggregates (CSV)",
+        data=detail.to_csv(index=False).encode("utf-8"),
+        file_name="published_team_productivity.csv",
+        mime="text/csv",
+    )
+
+    # Findings based only on published aggregate metrics
+    st.header("4. Productivity findings")
+
+    if not team_summary.empty:
+        best_velocity = team_summary.loc[
+            team_summary["velocity_points"].idxmax()
+        ]
+        st.write(
+            f"**Highest published story-point volume:** "
+            f"{best_velocity['team_name']} — "
+            f"{best_velocity['velocity_points']:.0f} points."
+        )
+
+        completion_candidates = team_summary.dropna(
+            subset=["completion_rate_pct"]
+        )
+        if not completion_candidates.empty:
+            best_completion = completion_candidates.loc[
+                completion_candidates["completion_rate_pct"].idxmax()
+            ]
+            st.write(
+                f"**Highest published completion rate:** "
+                f"{best_completion['team_name']} — "
+                f"{best_completion['completion_rate_pct']:.2f}%."
+            )
+
+    st.header("5. Data quality and interpretation")
+    st.write(
+        "- Blocked-task, reopened-task and individual-task verification "
+        "details are not included in the public dataset."
+    )
+    st.write(
+        "- Cycle-time comparison is the mean of available sprint averages; "
+        "it is not weighted by the number of valid completed tasks."
+    )
+    st.write(
+        "- Suppressed team-sprint groups are excluded rather than treated "
+        "as zero. Public totals may therefore be lower than local totals."
+    )
+    st.write(
+        "- Story-point volume is a delivery measure, not a direct measure "
+        "of individual productivity."
+    )
+
+    st.success("Hosted Team Productivity Dashboard loaded successfully.")
+    st.stop()
+
 
 # =========================================================
 # LOAD DATA

@@ -1,5 +1,6 @@
 
 from pathlib import Path
+import os
 
 import duckdb
 import pandas as pd
@@ -94,6 +95,309 @@ st.markdown("""
     }
 </style>
 """, unsafe_allow_html=True)
+
+
+
+# =========================================================
+# HOSTED PAGE 11 - PUBLIC EXECUTIVE SCORECARD
+# =========================================================
+
+HOSTED_MODE = (
+    os.getenv("PULSEIQ_HOSTED_MODE", "").lower() == "true"
+    or not DB_PATH.exists()
+)
+
+if HOSTED_MODE:
+    HOSTED_DATA = BASE_DIR / "data" / "hosted"
+
+    @st.cache_data(ttl=300)
+    def load_hosted_scorecard():
+        workforce = pd.read_parquet(
+            HOSTED_DATA / "workforce_monthly.parquet"
+        )
+        actuals = pd.read_parquet(
+            HOSTED_DATA / "ai_actuals_monthly.parquet"
+        )
+        attendance = pd.read_parquet(
+            HOSTED_DATA / "attendance_monthly.parquet"
+        )
+        payroll = pd.read_parquet(
+            HOSTED_DATA / "payroll_monthly.parquet"
+        )
+        finance = pd.read_parquet(
+            HOSTED_DATA / "finance_monthly.parquet"
+        )
+        return workforce, actuals, attendance, payroll, finance
+
+    try:
+        workforce, actuals, attendance, payroll, finance = (
+            load_hosted_scorecard()
+        )
+    except Exception as exc:
+        st.error(f"Unable to load hosted scorecard: {exc}")
+        st.stop()
+
+    date_columns = [
+        (workforce, "month_start_date"),
+        (actuals, "month_start_date"),
+        (attendance, "month_start_date"),
+        (payroll, "month_start_date"),
+        (finance, "month_start_date"),
+    ]
+
+    for frame, column in date_columns:
+        frame[column] = pd.to_datetime(frame[column])
+
+    available_months = sorted(
+        finance["month_start_date"].dropna().unique(),
+        reverse=True,
+    )
+
+    if not available_months:
+        st.error("No monthly executive scorecard data is available.")
+        st.stop()
+
+    selected_month = st.selectbox(
+        "Select reporting month",
+        available_months,
+        format_func=lambda x: pd.Timestamp(x).strftime("%B %Y"),
+    )
+
+    selected_month = pd.Timestamp(selected_month)
+    previous_months = [
+        month for month in available_months
+        if pd.Timestamp(month) < selected_month
+    ]
+
+    previous_month = (
+        pd.Timestamp(previous_months[0])
+        if previous_months else None
+    )
+
+    def weighted_average(df, value_col, weight_col):
+        valid = df[
+            df[value_col].notna()
+            & df[weight_col].notna()
+            & (df[weight_col] > 0)
+        ]
+        if valid.empty:
+            return None
+        return float(
+            (valid[value_col] * valid[weight_col]).sum()
+            / valid[weight_col].sum()
+        )
+
+    def get_hosted_kpis(month):
+        result = {
+            "headcount": None,
+            "attrition": None,
+            "attendance": None,
+            "overtime": None,
+            "revenue": None,
+            "profit": None,
+            "margin": None,
+            "payroll_ratio": None,
+        }
+
+        if month is None:
+            return result
+
+        w = workforce[workforce["month_start_date"] == month]
+        a = actuals[actuals["month_start_date"] == month]
+        at = attendance[attendance["month_start_date"] == month]
+        p = payroll[payroll["month_start_date"] == month]
+        f = finance[finance["month_start_date"] == month]
+
+        if not w.empty:
+            result["headcount"] = float(w["headcount"].sum())
+
+        if not a.empty:
+            result["attrition"] = float(
+                a["actual_attrition_rate_pct"].iloc[0]
+            )
+
+        result["attendance"] = weighted_average(
+            at, "attendance_rate_pct", "employee_count"
+        )
+
+        result["overtime"] = weighted_average(
+            p, "overtime_share_pct", "employee_count"
+        )
+
+        if not f.empty:
+            row = f.iloc[0]
+            result["revenue"] = float(row["revenue"])
+            result["profit"] = float(row["net_profit"])
+            result["margin"] = float(row["operating_margin_pct"])
+            result["payroll_ratio"] = float(row["payroll_pct_revenue"])
+
+        return result
+
+    current_kpis = get_hosted_kpis(selected_month)
+    previous_kpis = get_hosted_kpis(previous_month)
+
+    latest_month_end = (
+        actuals["month_start_date"].max() + pd.offsets.MonthEnd(0)
+    ).strftime("%d %B %Y")
+
+    st.info(
+        f"Reporting month: {selected_month.strftime('%B %Y')} | "
+        f"Company-wide data cut-off: {latest_month_end}"
+    )
+
+    st.divider()
+    st.subheader(
+        f"Company Health — {selected_month.strftime('%B %Y')}"
+    )
+
+    kpi_config = [
+        {
+            "key": "headcount",
+            "name": "Headcount",
+            "unit": "count",
+            "reason": "Published company-wide headcount across eligible groups.",
+        },
+        {
+            "key": "attrition",
+            "name": "Monthly Attrition",
+            "unit": "percent",
+            "reason": "Company-wide monthly exits relative to starting headcount.",
+        },
+        {
+            "key": "attendance",
+            "name": "Attendance Rate",
+            "unit": "percent",
+            "reason": "Employee-count-weighted published department attendance.",
+        },
+        {
+            "key": "overtime",
+            "name": "Overtime Share",
+            "unit": "percent",
+            "reason": "Employee-count-weighted published department overtime share.",
+        },
+        {
+            "key": "revenue",
+            "name": "Revenue",
+            "unit": "currency",
+            "reason": "Company-wide monthly revenue.",
+        },
+        {
+            "key": "profit",
+            "name": "Net Profit",
+            "unit": "currency",
+            "reason": "Company-wide monthly net profit.",
+        },
+        {
+            "key": "margin",
+            "name": "Operating Margin",
+            "unit": "percent",
+            "reason": "Company-wide operating margin.",
+        },
+        {
+            "key": "payroll_ratio",
+            "name": "Payroll % of Revenue",
+            "unit": "percent",
+            "reason": "Company-wide payroll cost as a share of revenue.",
+        },
+    ]
+
+    def format_hosted_value(value, unit):
+        if value is None or pd.isna(value):
+            return "Unavailable"
+        if unit == "count":
+            return f"{value:,.0f}"
+        if unit == "percent":
+            return f"{value:.2f}%"
+        if unit == "currency":
+            return f"₹{value / 10000000:.2f} Cr"
+        return f"{value:,.2f}"
+
+    for row_start in range(0, len(kpi_config), 4):
+        cols = st.columns(4)
+
+        for col, config in zip(
+            cols, kpi_config[row_start:row_start + 4]
+        ):
+            with col:
+                key = config["key"]
+                value = current_kpis[key]
+                previous = previous_kpis[key]
+
+                if value is not None and previous is not None:
+                    delta = value - previous
+                    if config["unit"] == "currency":
+                        delta_text = f"₹{delta / 10000000:+.2f} Cr"
+                    elif config["unit"] == "percent":
+                        delta_text = f"{delta:+.2f} percentage points"
+                    else:
+                        delta_text = f"{delta:+,.0f}"
+                else:
+                    delta_text = "Previous month unavailable"
+
+                st.markdown(
+                    f"""
+                    <div class="kpi-card">
+                        <div class="kpi-name">{config['name']}</div>
+                        <div class="kpi-value">
+                            {format_hosted_value(value, config['unit'])}
+                        </div>
+                        <div class="kpi-meta">Target: No target defined</div>
+                        <div class="kpi-meta">Previous month: {delta_text}</div>
+                        <div class="kpi-status status-neutral">
+                            NO TARGET
+                        </div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+                st.caption(config["reason"])
+
+    st.divider()
+    st.subheader("Why these eight KPIs?")
+
+    st.markdown("""
+    | KPI | Executive reason |
+    |---|---|
+    | Headcount | Understand workforce size and capacity. |
+    | Monthly Attrition | Monitor workforce stability. |
+    | Attendance Rate | Monitor workforce availability. |
+    | Overtime Share | Identify potential payroll pressure. |
+    | Revenue | Track business income. |
+    | Net Profit | Understand business profitability. |
+    | Operating Margin | Measure profitability relative to revenue. |
+    | Payroll % of Revenue | Monitor payroll cost against revenue. |
+    """)
+
+    st.info(
+        "Task completion remains in the detailed Team Productivity dashboard "
+        "because its governed metric is at team/sprint level."
+    )
+
+    st.divider()
+    st.subheader("Metric governance and interpretation")
+
+    st.markdown("""
+    - KPI values use privacy-reviewed hosted aggregate datasets.
+    - No department-level scorecard or employee-level records are displayed.
+    - Attendance and overtime use employee-count-weighted averages of published groups.
+    - Monthly attrition uses company-wide actuals.
+    - Headcount is the sum of published eligible department groups.
+    - Finance metrics are company-wide aggregates.
+    - KPI targets are not included in the public export and are therefore not evaluated.
+    """)
+
+    st.warning(
+        "A missing target is not a failed KPI. Finance metrics should be "
+        "validated by the Finance team before executive decisions."
+    )
+
+    st.caption(
+        f"Reporting month: {selected_month.strftime('%B %Y')} | "
+        f"Latest available data cut-off: {latest_month_end} | "
+        "Sources: privacy-reviewed hosted Parquet aggregates."
+    )
+
+    st.stop()
 
 
 # ---------------------------------------------------------

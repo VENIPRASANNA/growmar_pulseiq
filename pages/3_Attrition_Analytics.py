@@ -1,4 +1,5 @@
 from pathlib import Path
+import os
 
 import duckdb
 import pandas as pd
@@ -17,6 +18,12 @@ DB = (
 )
 
 MIN_GROUP_SIZE = 10
+ROOT = Path(__file__).resolve().parents[1]
+HOSTED_DIR = ROOT / "data" / "hosted"
+HOSTED_MODE = (
+    os.getenv("PULSEIQ_HOSTED_MODE", "").lower() == "true"
+    or not DB.exists()
+)
 
 st.set_page_config(
     page_title="Attrition Analytics",
@@ -29,6 +36,149 @@ st.caption(
     "Actual employee exits, tenure at exit, and separately labelled "
     "predicted attrition risk."
 )
+
+
+# =========================================================
+# HOSTED PUBLIC ATTRITION DASHBOARD
+# =========================================================
+
+if HOSTED_MODE:
+    st.caption(
+        "Company-wide annual snapshots of rolling 12-month attrition."
+    )
+
+    @st.cache_data
+    def load_hosted_attrition():
+        frame = pd.read_parquet(
+            HOSTED_DIR / "attrition_rolling_12m.parquet"
+        )
+        frame["month_start_date"] = pd.to_datetime(
+            frame["month_start_date"]
+        )
+        return frame.sort_values("month_start_date")
+
+    try:
+        public_attrition = load_hosted_attrition()
+    except Exception as exc:
+        st.error(f"Unable to load public attrition data: {exc}")
+        st.stop()
+
+    if public_attrition.empty:
+        st.warning("No annual attrition snapshots are available.")
+        st.stop()
+
+    latest = public_attrition.iloc[-1]
+
+    c1, c2 = st.columns(2)
+    c1.metric(
+        "Rolling 12-month attrition",
+        f"{latest['attrition_rate_12m_pct']:.1f}%",
+        help="Company-wide rate for the latest published September snapshot.",
+    )
+    c2.metric(
+        "Rolling 12-month voluntary attrition",
+        f"{latest['voluntary_attrition_rate_12m_pct']:.1f}%",
+        help="Company-wide voluntary attrition rate for the same snapshot.",
+    )
+
+    st.subheader("Annual attrition trend")
+
+    chart_data = public_attrition.melt(
+        id_vars="month_start_date",
+        value_vars=[
+            "attrition_rate_12m_pct",
+            "voluntary_attrition_rate_12m_pct",
+        ],
+        var_name="metric",
+        value_name="rate_pct",
+    )
+
+    chart_data["metric"] = chart_data["metric"].map({
+        "attrition_rate_12m_pct": "Overall attrition",
+        "voluntary_attrition_rate_12m_pct": "Voluntary attrition",
+    })
+
+    fig = px.line(
+        chart_data,
+        x="month_start_date",
+        y="rate_pct",
+        color="metric",
+        markers=True,
+        labels={
+            "month_start_date": "September snapshot",
+            "rate_pct": "Rolling 12-month rate (%)",
+            "metric": "Metric",
+        },
+    )
+    fig.update_layout(template="plotly_white")
+    st.plotly_chart(fig, use_container_width=True)
+
+    st.subheader("Published annual snapshots")
+
+    display_data = public_attrition.copy()
+    display_data["Year"] = (
+        display_data["month_start_date"].dt.year
+    )
+    display_data = display_data.rename(columns={
+        "attrition_rate_12m_pct": "Overall attrition (%)",
+        "voluntary_attrition_rate_12m_pct": "Voluntary attrition (%)",
+    })
+
+    st.dataframe(
+        display_data[
+            [
+                "Year",
+                "Overall attrition (%)",
+                "Voluntary attrition (%)",
+            ]
+        ].round(1),
+        use_container_width=True,
+        hide_index=True,
+    )
+
+    first = public_attrition.iloc[0]
+    last = public_attrition.iloc[-1]
+    overall_change = (
+        last["attrition_rate_12m_pct"]
+        - first["attrition_rate_12m_pct"]
+    )
+    voluntary_change = (
+        last["voluntary_attrition_rate_12m_pct"]
+        - first["voluntary_attrition_rate_12m_pct"]
+    )
+
+    st.subheader("Key observations")
+    st.write(
+        f"Overall rolling attrition changed by "
+        f"{overall_change:+.1f} percentage points between "
+        f"{first['month_start_date']:%Y} and "
+        f"{last['month_start_date']:%Y}."
+    )
+    st.write(
+        f"Voluntary rolling attrition changed by "
+        f"{voluntary_change:+.1f} percentage points over the same period."
+    )
+
+    st.divider()
+    st.subheader("Methodology and privacy")
+    st.markdown(
+        """
+        - Rates represent company-wide rolling 12-month attrition.
+        - Snapshots are published annually, using September observations.
+        - Consecutive rolling windows overlap; year-to-year changes should
+          not be interpreted as independent annual cohorts.
+        - Exact exit counts, headcounts, department breakdowns, employee
+          tenure records and individual risk predictions are not published.
+        - Percentages are rounded for public display.
+        """
+    )
+
+    st.info(
+        "Public edition: This dashboard uses reviewed company-wide "
+        "aggregate data. It does not expose employee-level records."
+    )
+
+    st.stop()
 
 
 # =========================================================

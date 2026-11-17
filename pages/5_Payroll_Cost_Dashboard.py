@@ -2,6 +2,8 @@ import duckdb
 import pandas as pd
 import plotly.express as px
 import streamlit as st
+import os
+from pathlib import Path
 
 # =========================================================
 # GROWMAR PHASE 2 - TASK 9: PAYROLL COST DASHBOARD
@@ -14,6 +16,10 @@ st.set_page_config(
 )
 
 DB_PATH = "05_Starter/pulseiq.duckdb"
+HOSTED_MODE = (
+    os.getenv("PULSEIQ_HOSTED_MODE", "").lower() == "true"
+    or not Path(DB_PATH).exists()
+)
 
 st.title("Payroll Cost Dashboard")
 st.caption(
@@ -25,6 +31,104 @@ st.write(
     "Review aggregated payroll costs across departments and months. "
     "Individual payroll records and employee salary amounts are never displayed."
 )
+
+
+# =========================================================
+# PUBLIC HOSTED DASHBOARD
+# Uses company-wide curated payroll aggregates only.
+# =========================================================
+
+if HOSTED_MODE:
+    st.subheader("Company-wide payroll overview")
+
+    hosted_file = Path("data/hosted/payroll_company_monthly.parquet")
+
+    if not hosted_file.exists():
+        st.error("Hosted payroll aggregate file is unavailable.")
+        st.stop()
+
+    try:
+        hosted_payroll = pd.read_parquet(hosted_file)
+    except Exception as exc:
+        st.error(f"Unable to load hosted payroll data: {exc}")
+        st.stop()
+
+    if hosted_payroll.empty:
+        st.warning("No hosted payroll data is available.")
+        st.stop()
+
+    hosted_payroll["month_start_date"] = pd.to_datetime(
+        hosted_payroll["month_start_date"]
+    )
+    hosted_payroll = hosted_payroll.sort_values("month_start_date")
+
+    latest = hosted_payroll.iloc[-1]
+    average_cost = (
+        latest["employer_cost"] / latest["employee_count"]
+        if latest["employee_count"] else 0
+    )
+
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("Gross pay", f"₹{latest['gross_pay']:,.0f}")
+    k2.metric("Net pay", f"₹{latest['net_pay']:,.0f}")
+    k3.metric("Employer cost", f"₹{latest['employer_cost']:,.0f}")
+    k4.metric("Average employer cost per employee", f"₹{average_cost:,.0f}")
+
+    st.caption(
+        f"Latest reporting month: {latest['month_start_date']:%B %Y} "
+        f"| Employees included: {int(latest['employee_count']):,}"
+    )
+
+    st.subheader("Monthly payroll trends")
+
+    trend = hosted_payroll.melt(
+        id_vars="month_start_date",
+        value_vars=["gross_pay", "net_pay", "employer_cost"],
+        var_name="cost_type",
+        value_name="amount",
+    )
+
+    fig = px.line(
+        trend,
+        x="month_start_date",
+        y="amount",
+        color="cost_type",
+        markers=True,
+        title="Company-wide gross, net and employer cost",
+        labels={
+            "month_start_date": "Month",
+            "amount": "Amount (₹)",
+            "cost_type": "Payroll measure",
+        },
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+    st.subheader("Monthly payroll summary")
+    st.dataframe(
+        hosted_payroll.rename(columns={
+            "month_start_date": "Month",
+            "gross_pay": "Gross pay (₹)",
+            "net_pay": "Net pay (₹)",
+            "employer_cost": "Employer cost (₹)",
+            "employee_count": "Employee count",
+        }),
+        hide_index=True,
+        use_container_width=True,
+    )
+
+    st.caption(
+        "Data source: curated company-wide payroll aggregates. "
+        "Individual payroll records, department-level salary details "
+        "and exception metadata are not published."
+    )
+    st.caption(
+        f"Data cut-off: "
+        f"{(latest['month_start_date'] + pd.offsets.MonthEnd(0)):%d %B %Y}."
+    )
+
+    st.divider()
+    st.caption("PulseIQ • GROWMAR Phase 2 Task 17 • Hosted payroll dashboard")
+    st.stop()
 
 
 @st.cache_data(ttl=60)
