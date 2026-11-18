@@ -21,7 +21,7 @@ A total of 14 data-quality checks were executed.
 | Errors | 0 |
 | Total | 14 |
 
-**DQ Run ID:** `0b94dfcd-f20a-4826-8533-67477732c952`
+**DQ Run ID:** `43bb6c80-fe24-48cc-8550-a8a5753ef744`
 
 The results indicate that several validation rules passed successfully, while critical reconciliation and data-integrity issues require further investigation.
 
@@ -134,7 +134,7 @@ Latest successful ETL timestamp:
 
 DQ execution timestamp:
 
-`2026-11-18 17:22:43 +05:30`
+`2026-11-18 18:19:48.478026 +05:30`
 
 The pipeline therefore did not satisfy the configured freshness requirement at the time of validation.
 
